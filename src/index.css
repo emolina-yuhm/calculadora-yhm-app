@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+
+/* ---------- Ajustes de impresión ---------- */
+@page {
+  margin: 10mm;
+}
+
+@media print {
+  /* Volver visible y dentro del flujo normal en la ventana de impresión */
+  #print-collection {
+    position: static !important;
+    left: auto !important;
+    top: auto !important;
+    width: auto !important;
+    display: block !important; /* asegurar que sí se vea en print */
+  }
+
+  /* Layout limpio para los bloques impresos */
+  #print-collection .print-sheet { padding: 0; }
+  #print-collection .print-card {
+    page-break-inside: avoid;
+    break-inside: avoid;
+    margin: 0 0 10mm 0;
+  }
+
+  /* Colores de fondo/bordes (para KPIs) */
+  body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
