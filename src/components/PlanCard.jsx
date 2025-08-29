@@ -6,7 +6,6 @@ import {
   fmtARSCompact,
   sanitizeNumber,
   calcularPlanesPorCoeficientes,
-  plantillaPresupuestoWA
 } from '../utils/finance'
 import { getCards, loadCardsAsync } from '../lib/cardsStorage'
 import { modal, toast } from '../lib/alerts'
@@ -104,13 +103,13 @@ const PlanCard = forwardRef(function PlanCard(
       .sort((a, b) => a.cuotas - b.cuotas)
   }, [selectedCard])
 
-  // Texto “tasas por cuota”
+  // Texto “tasas por cuota” (solo para UI NO compacta)
   const tasasPorCuotaText = useMemo(() => {
     if (!coefEntries.length) return '—'
     return coefEntries.map(({ cuotas, pct }) => `${cuotas}: ${pct}%`).join(' • ')
   }, [coefEntries])
 
-  // Resumen del plan (min, max, promedio de tasas)
+  // Resumen del plan (min, max, promedio de tasas) — UI NO compacta
   const tasasResumen = useMemo(() => {
     if (!coefEntries.length) return null
     const pcts = coefEntries.map(e => e.pct)
@@ -163,7 +162,7 @@ const PlanCard = forwardRef(function PlanCard(
     `
   })
 
-  // Copiar SOLO el plan actual, incluyendo encabezado con Producto y Tarjeta
+  // Copiar SOLO el plan actual (sin tasas), con encabezado en negrita
   const copyPlansOnly = async () => {
     if (!ready) {
       modal.warning('Faltan datos', 'Completá el plan antes de copiar.')
@@ -171,12 +170,12 @@ const PlanCard = forwardRef(function PlanCard(
     }
 
     const header = [
-      `${title || 'Plan'}`,
+      `**${title || 'Plan'}**`,
       `Producto: ${producto || '—'}`,
       `Tarjeta: ${selectedCard?.nombre || selectedCard?.id || '—'}`,
       '',
       'Planes:'
-    ].filter(Boolean).join('\n')
+    ].join('\n')
 
     const bloques = [...planes]
       .sort((a, b) => (a.cuotas || 0) - (b.cuotas || 0))
@@ -207,14 +206,33 @@ const PlanCard = forwardRef(function PlanCard(
     }
   }
 
-  // Copiar plantilla completa en formato WhatsApp (con negritas)
+  // Copiar plantilla en formato WhatsApp para ESTE plan (sin tasas)
   const copyTemplateWA = async () => {
     if (!ready) {
       modal.warning('Faltan datos', 'Completá el plan antes de copiar.')
       return
     }
-    const tarjetaNombre = selectedCard?.nombre || '—'
-    const text = plantillaPresupuestoWA({ producto, tarjetaNombre, planes })
+
+    const encabezado = [
+      '*PRESUPUESTO:*',
+      '',
+      `*PRODUCTO:* ${String(producto || '—')}`,
+      '',
+      `*FINANCIAMIENTO:* Tarjeta: ${selectedCard?.nombre || selectedCard?.id || '—'}`,
+      ''
+    ].join('\n')
+
+    const cuerpo = [...planes]
+      .sort((a, b) => (a.cuotas || 0) - (b.cuotas || 0))
+      .map(p => [
+        `*Cuotas:* ${p.cuotas}`,
+        `*Valor de cuota:* ${fmtARS(p.valorCuota)}`,
+        `*Margen necesario:* ${fmtARS(p.costoFinal)}`
+      ].join('\n'))
+      .join('\n\n')
+
+    const text = `${encabezado}${cuerpo}`
+
     try {
       await navigator.clipboard.writeText(text)
       toast.success('Plantilla WA copiada.')
@@ -286,19 +304,7 @@ const PlanCard = forwardRef(function PlanCard(
 
             <button
               type="button"
-              onClick={useReactToPrint({
-                contentRef: componentRef,
-                removeAfterPrint: false,
-                documentTitle: title || 'Plan',
-                pageStyle: `
-                  @page { margin: 10mm; }
-                  @media print {
-                    body * { visibility: hidden; }
-                    .print-solo, .print-solo * { visibility: visible; }
-                    .print-solo { position: static !important; left: auto !important; top: auto !important; }
-                  }
-                `
-              })}
+              onClick={handlePrint}
               className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 active:bg-emerald-800"
               title="Imprimir / Exportar PDF"
               disabled={!ready}

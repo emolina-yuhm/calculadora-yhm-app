@@ -2,11 +2,7 @@
 import React, { useMemo, useRef, useState } from 'react'
 import { useReactToPrint } from 'react-to-print'
 import PlanCard from './PlanCard'
-import {
-  calcularPlanesPorCoeficientes,
-  plantillaPresupuesto,
-  plantillaPresupuestoWA,
-} from '../utils/finance'
+import { calcularPlanesPorCoeficientes } from '../utils/finance'
 import { getCards } from '../lib/cardsStorage'
 import { modal, toast } from '../lib/alerts'
 
@@ -19,16 +15,36 @@ const fmtARS = (n) =>
     maximumFractionDigits: 2
   })
 
-// Lista ordenada "cuotas: porcentaje" desde coeficientes
-const buildTasasPorCuota = (coeficientes = {}) => {
-  const pares = Object.entries(coeficientes)
-    .map(([k, v]) => [Number(k), Number(v)])
-    .filter(([cuotas, pct]) => Number.isFinite(cuotas) && cuotas > 0 && Number.isFinite(pct) && pct >= 0)
-    .sort((a, b) => a[0] - b[0])
+// Obtiene estado guardado de un PlanCard desde localStorage y resuelve tarjeta/planes
+function readPlanState(storageKey) {
+  const raw = localStorage.getItem(storageKey)
+  if (!raw) return null
+  let st; try { st = JSON.parse(raw) } catch { return null }
+  const { producto = '', precio, adelanto, cardId } = st || {}
+  if (!cardId) return null
 
-  if (!pares.length) return '—'
+  const cards = getCards() || []
+  const card = cards.find(c => c.id === cardId)
+  if (!card) return null
 
-  return pares.map(([cuotas, pct]) => `${cuotas} cuotas: ${pct}%`).join('\n')
+  const coeficientes = card.coeficientes || {}
+  const cuotasKeys = Object.keys(coeficientes || {})
+  if (cuotasKeys.length === 0) return null
+
+  const planes = calcularPlanesPorCoeficientes({
+    precio,
+    adelanto,
+    coeficientes
+  })
+
+  return {
+    titulo: '',
+    producto,
+    precio,
+    adelanto,
+    card,
+    planes
+  }
 }
 
 export default function PlansBoard() {
@@ -48,10 +64,8 @@ export default function PlansBoard() {
     pageStyle: `
       @page { margin: 10mm; }
       @media print {
-        /* Ocultar TODO menos el contenedor de impresión */
         body * { visibility: hidden; }
         #print-collection, #print-collection * { visibility: visible; }
-        /* Reincorporarlo al flujo normal en print */
         #print-collection { position: static !important; left: auto !important; top: auto !important; width: auto !important; }
         body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       }
@@ -69,121 +83,50 @@ export default function PlansBoard() {
     'bg-white text-emerald-900 hover:bg-emerald-50 active:bg-emerald-100'
 
   /* ─────────────────────────────
-     Build de PLANTILLA COMPLETA (se mantiene para WhatsApp)
+     COPIAR SELECCIONADOS (solo texto, SIN plantilla, SIN tasas)
      ───────────────────────────── */
-  const buildPlantillaFromKey = (key) => {
-    const raw = localStorage.getItem(key)
-    if (!raw) return null
-    let st; try { st = JSON.parse(raw) } catch { return null }
-
-    const { producto = '', precio, adelanto, cardId } = st || {}
-    if (!cardId) return null
-
-    const cards = getCards() || []
-    const card = cards.find(c => c.id === cardId)
-    if (!card) return null
-
-    const coeficientes = card.coeficientes || {}
-    const cuotasKeys = Object.keys(coeficientes)
-    if (cuotasKeys.length === 0) return null
-
-    const planes = calcularPlanesPorCoeficientes({
-      precio,
-      adelanto,
-      coeficientes
-    })
-
-    return plantillaPresupuesto({
-      producto,
-      tarjetaNombre: card.nombre || '',
-      planes
-    })
-  }
-
-  const buildPlantillaWAFromKey = (key) => {
-    const raw = localStorage.getItem(key)
-    if (!raw) return null
-    let st; try { st = JSON.parse(raw) } catch { return null }
-
-    const { producto = '', precio, adelanto, cardId } = st || {}
-    if (!cardId) return null
-
-    const cards = getCards() || []
-    const card = cards.find(c => c.id === cardId)
-    if (!card) return null
-
-    const coeficientes = card.coeficientes || {}
-    const cuotasKeys = Object.keys(coeficientes)
-    if (cuotasKeys.length === 0) return null
-
-    const planes = calcularPlanesPorCoeficientes({
-      precio,
-      adelanto,
-      coeficientes
-    })
-
-    return plantillaPresupuestoWA({
-      producto,
-      tarjetaNombre: card.nombre || '',
-      planes
-    })
-  }
-
-  /* ─────────────────────────────
-     NUEVO: Resumen simple para “Copiar seleccionados (texto)”
-     - SOLO planes seleccionados
-     - SIN plantilla
-     - Incluye Producto y Tarjeta
-     - Lista tasas por cuota
-     ───────────────────────────── */
-  const buildResumenSimpleFromKey = (key, tituloPlan) => {
-    const raw = localStorage.getItem(key)
-    if (!raw) return null
-    let st; try { st = JSON.parse(raw) } catch { return null }
-
-    const { producto = '', precio, adelanto, cardId } = st || {}
-    if (!cardId) return null
-
-    const cards = getCards() || []
-    const card = cards.find(c => c.id === cardId)
-    if (!card) return null
-
-    const coeficientes = card.coeficientes || {}
-    if (!Object.keys(coeficientes).length) return null
-
-    // Texto sin plantilla, con Producto + Tarjeta + Tasas por cuota
-    const lineas = [
-      `${tituloPlan || 'Plan'}`,
-      producto ? `Producto: ${producto}` : null,
-      card?.nombre ? `Tarjeta: ${card.nombre}` : `Tarjeta: ${card.id}`,
-      (precio != null) ? `Precio: ${fmtARS(precio)}` : null,
-      (adelanto != null && Number(adelanto) > 0) ? `Adelanto: ${fmtARS(adelanto)}` : null,
-      '',
-      'Tasas por cuota:',
-      buildTasasPorCuota(coeficientes)
-    ].filter(Boolean)
-
-    return lineas.join('\n')
-  }
-
   const copySelected = async () => {
-    const parts = []
-    if (selectedKeys.includes('A')) {
-      const s = buildResumenSimpleFromKey('fin_motos_plan_A_v1', 'Plan A'); if (s) parts.push(s)
-    }
-    if (selectedKeys.includes('B')) {
-      const s = buildResumenSimpleFromKey('fin_motos_plan_B_v1', 'Plan B'); if (s) parts.push(s)
-    }
-    if (selectedKeys.includes('C')) {
-      const s = buildResumenSimpleFromKey('fin_motos_plan_C_v1', 'Plan C'); if (s) parts.push(s)
+    const blocks = []
+
+    const tryPush = (storageKey, titulo) => {
+      const st = readPlanState(storageKey)
+      if (!st) return
+      const { producto, precio, adelanto, card, planes } = st
+
+      // Título en negrita (Markdown-like)
+      const header = [
+        `**${titulo}**`,
+        `Producto: ${producto || '—'}`,
+        `Tarjeta: ${card?.nombre || card?.id || '—'}`,
+        `Precio: ${fmtARS(precio)}`,
+        `Adelanto: ${fmtARS(adelanto)}`,
+        ''
+      ].join('\n')
+
+      // Solo líneas de planes calculados (sin tasas)
+      const cuerpo = planes
+        .slice()
+        .sort((a, b) => (a.cuotas || 0) - (b.cuotas || 0))
+        .map(p => [
+          `Cuotas: ${p.cuotas}`,
+          `Valor de cuota: ${fmtARS(p.valorCuota)}`,
+          `Margen necesario: ${fmtARS(p.costoFinal)}`
+        ].join('\n'))
+        .join('\n\n')
+
+      blocks.push(`${header}${cuerpo}`)
     }
 
-    if (parts.length === 0) {
+    if (selectedKeys.includes('A')) tryPush('fin_motos_plan_A_v1', 'Plan A')
+    if (selectedKeys.includes('B')) tryPush('fin_motos_plan_B_v1', 'Plan B')
+    if (selectedKeys.includes('C')) tryPush('fin_motos_plan_C_v1', 'Plan C')
+
+    if (!blocks.length) {
       modal.warning('Nada para copiar', 'Completá al menos un plan con tarjeta y cuotas configuradas.')
       return
     }
 
-    const text = parts.join('\n\n')
+    const text = blocks.join('\n\n\n')
     try {
       await navigator.clipboard.writeText(text)
       toast.success('Planes seleccionados copiados.')
@@ -197,24 +140,71 @@ export default function PlansBoard() {
     }
   }
 
+  /* ─────────────────────────────
+     COPIAR SELECCIONADOS (WHATSAPP) — con NEGRITAS, sin tasas, sin duplicados
+     Formato:
+       *PRESUPUESTO:*
+       *PRODUCTO:* ...
+       *FINANCIAMIENTO:* Tarjeta: ...
+       (listado de cuotas)
+     + Condiciones generales UNA SOLA VEZ al final
+     ───────────────────────────── */
   const copySelectedWA = async () => {
-    const parts = []
-    if (selectedKeys.includes('A')) {
-      const s = buildPlantillaWAFromKey('fin_motos_plan_A_v1'); if (s) parts.push(s)
-    }
-    if (selectedKeys.includes('B')) {
-      const s = buildPlantillaWAFromKey('fin_motos_plan_B_v1'); if (s) parts.push(s)
-    }
-    if (selectedKeys.includes('C')) {
-      const s = buildPlantillaWAFromKey('fin_motos_plan_C_v1'); if (s) parts.push(s)
+    const blocks = []
+
+    const tryPush = (storageKey) => {
+      const st = readPlanState(storageKey)
+      if (!st) return
+      const { producto, card, planes } = st
+
+      const encabezado = [
+        '*PRESUPUESTO:*',
+        '',
+        `*PRODUCTO:* ${String(producto || '—')}`,
+        '',
+        `*FINANCIAMIENTO:* Tarjeta: ${card?.nombre || card?.id || '—'}`,
+        ''
+      ].join('\n')
+
+      const cuerpo = planes
+        .slice()
+        .sort((a, b) => (a.cuotas || 0) - (b.cuotas || 0))
+        .map(p => [
+          `*Cuotas:* ${p.cuotas}`,
+          `*Valor de cuota:* ${fmtARS(p.valorCuota)}`,
+          `*Margen necesario:* ${fmtARS(p.costoFinal)}`
+        ].join('\n'))
+        .join('\n\n')
+
+      blocks.push(`${encabezado}${cuerpo}`)
     }
 
-    if (parts.length === 0) {
+    if (selectedKeys.includes('A')) tryPush('fin_motos_plan_A_v1')
+    if (selectedKeys.includes('B')) tryPush('fin_motos_plan_B_v1')
+    if (selectedKeys.includes('C')) tryPush('fin_motos_plan_C_v1')
+
+    if (!blocks.length) {
       modal.warning('Nada para copiar', 'Completá al menos un plan con tarjeta y cuotas configuradas.')
       return
     }
 
-    const text = parts.join('\n\n')
+    const condiciones = [
+      '',
+      '',
+      '*CONDICIONES GENERALES*',
+      '',
+      '- Los precios indicados son sin incluir costos de patentamiento',
+      '- Puede usar varias tarjetas de crédito.',
+      '- El monto del patentamiento le informa el vendedor.',
+      '- Los precios están sujetos a modificaciones sin previo aviso.',
+      '',
+      '*VALIDEZ DEL PRESUPUESTO 24 hs*',
+      '',
+      '¿Le interesa este presupuesto?'
+    ].join('\n')
+
+    const text = `${blocks.join('\n\n\n')}${condiciones}`
+
     try {
       await navigator.clipboard.writeText(text)
       toast.success('Plantillas (WhatsApp) copiadas.')
