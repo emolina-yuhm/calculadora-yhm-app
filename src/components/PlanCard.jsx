@@ -1,4 +1,5 @@
 // src/components/PlanCard.jsx
+// src/components/PlanCard.jsx
 import React, { useEffect, useMemo, useRef, useState, forwardRef } from 'react'
 import { useReactToPrint } from 'react-to-print'
 import {
@@ -162,7 +163,7 @@ const PlanCard = forwardRef(function PlanCard(
     `
   })
 
-  // Copiar SOLO el plan actual (sin tasas), con encabezado en negrita
+  // Copiar SOLO el plan actual (sin tasas), con encabezado y título en negrita
   const copyPlansOnly = async () => {
     if (!ready) {
       modal.warning('Faltan datos', 'Completá el plan antes de copiar.')
@@ -206,7 +207,7 @@ const PlanCard = forwardRef(function PlanCard(
     }
   }
 
-  // Copiar plantilla en formato WhatsApp para ESTE plan (sin tasas)
+  // Copiar plantilla en formato WhatsApp para ESTE plan (sin tasas, con negritas)
   const copyTemplateWA = async () => {
     if (!ready) {
       modal.warning('Faltan datos', 'Completá el plan antes de copiar.')
@@ -354,7 +355,7 @@ const PlanCard = forwardRef(function PlanCard(
                 inputMode="decimal"
                 placeholder="Ej: 500.000"
                 value={adelanto}
-                onChange={e => setAdelanto(e.target.value)}
+                onChange={(e) => setAdelanto(e.target.value)}
               />
             </label>
 
