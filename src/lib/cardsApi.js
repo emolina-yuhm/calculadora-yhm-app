@@ -1,82 +1,145 @@
 // src/lib/cardsApi.js
-const API_BASE_RAW = import.meta.env.VITE_API_BASE || ''
-// Normalizar: quitar barras finales (/, //, etc.)
-const API_BASE = API_BASE_RAW.replace(/\/+$/, '')
-const ADMIN_SECRET = import.meta.env.VITE_ADMIN_SECRET || ''
+
+// Lee base desde cualquiera de las dos envs (usa la que tengas)
+const API_BASE_RAW =
+  (import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_URL || '').trim();
+
+// Normalizar: quitar barras finales (/, //, etc.) y espacios
+const API_BASE = API_BASE_RAW.replace(/\/+$/, '');
+
+const ADMIN_SECRET = (import.meta.env.VITE_ADMIN_SECRET || '').trim();
 
 // Fallback local si el server no responde
-const LS_KEY = 'fin_cards_motos_v1'
+const LS_KEY = 'fin_cards_motos_v1';
 
 // Helper para construir URLs asegurando una sola barra
 function apiUrl(path = '') {
-  const p = String(path || '')
-  return API_BASE ? `${API_BASE}${p.startsWith('/') ? '' : '/'}${p}` : ''
+  const p = String(path || '');
+  if (!API_BASE) return '';
+  return `${API_BASE}${p.startsWith('/') ? '' : '/'}${p}`;
 }
 
+// Validación suave para detectar configuraciones raras
+function isAbsoluteHttpUrl(u) {
+  return /^https?:\/\//i.test(u);
+}
+
+// Lectura remota con manejo de errores claro
 export async function fetchCards() {
-  if (!API_BASE) {
-    const raw = localStorage.getItem(LS_KEY)
-    if (!raw) return { version: 1, cards: [] }
-    return JSON.parse(raw)
+  // Si no hay API configurada, usa cache local
+  if (!API_BASE || !isAbsoluteHttpUrl(API_BASE)) {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return { version: 1, cards: [] };
+    return JSON.parse(raw);
   }
+
   try {
-    const res = await fetch(apiUrl('/cards'), { cache: 'no-store' })
-    if (!res.ok) throw new Error('bad_response')
-    const data = await res.json()
-    localStorage.setItem(LS_KEY, JSON.stringify(data))
-    return data
-  } catch {
-    const raw = localStorage.getItem(LS_KEY)
-    if (raw) return JSON.parse(raw)
-    return { version: 1, cards: [] }
+    const res = await fetch(apiUrl('/cards'), {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+      credentials: 'omit'
+    });
+
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      const message = `read_failed (${res.status})${txt ? `: ${txt}` : ''}`;
+      throw new Error(message);
+    }
+
+    const data = await res.json();
+    localStorage.setItem(LS_KEY, JSON.stringify(data));
+    return data;
+  } catch (err) {
+    // si falla la red/servidor, intenta fallback local
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) return JSON.parse(raw);
+    // último recurso: estructura vacía
+    return { version: 1, cards: [] };
   }
 }
 
+// Guardado remoto con errores diferenciados (401 vs otros)
 export async function saveCards(payload) {
-  if (!API_BASE) {
-    localStorage.setItem(LS_KEY, JSON.stringify(payload))
-    window.dispatchEvent(new CustomEvent('cards:updated'))
-    return { ok: true, local: true }
+  if (!API_BASE || !isAbsoluteHttpUrl(API_BASE)) {
+    localStorage.setItem(LS_KEY, JSON.stringify(payload));
+    window.dispatchEvent(new CustomEvent('cards:updated'));
+    return { ok: true, local: true };
   }
+
+  const headers = {
+    'Content-Type': 'application/json',
+    Accept: 'application/json'
+  };
+
+  if (ADMIN_SECRET) {
+    headers['x-admin-secret'] = ADMIN_SECRET; // ⚠️ temporal (no recomendado para prod)
+  }
+
   const res = await fetch(apiUrl('/cards'), {
     method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-admin-secret': ADMIN_SECRET
-    },
-    body: JSON.stringify(payload)
-  })
-  if (!res.ok) throw new Error('save_failed')
-  localStorage.setItem(LS_KEY, JSON.stringify(payload))
-  window.dispatchEvent(new CustomEvent('cards:updated'))
-  return { ok: true }
+    headers,
+    body: JSON.stringify(payload),
+    credentials: 'omit'
+  });
+
+  if (res.status === 401) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`unauthorized (401)${body ? `: ${body}` : ''}`);
+  }
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`save_failed (${res.status})${body ? `: ${body}` : ''}`);
+  }
+
+  // Éxito
+  localStorage.setItem(LS_KEY, JSON.stringify(payload));
+  window.dispatchEvent(new CustomEvent('cards:updated'));
+  return res.json().catch(() => ({ ok: true }));
 }
 
-// Guardado pensado para "unload/ocultar pestaña".
-// Usa keepalive:true (permite headers, a diferencia de sendBeacon).
+// Guardado pensado para "unload/ocultar pestaña" con keepalive
 export async function saveCardsBackground(payload) {
-  if (!API_BASE) {
-    localStorage.setItem(LS_KEY, JSON.stringify(payload))
-    window.dispatchEvent(new CustomEvent('cards:updated'))
-    return { ok: true, local: true }
+  if (!API_BASE || !isAbsoluteHttpUrl(API_BASE)) {
+    localStorage.setItem(LS_KEY, JSON.stringify(payload));
+    window.dispatchEvent(new CustomEvent('cards:updated'));
+    return { ok: true, local: true };
   }
+
+  const headers = {
+    'Content-Type': 'application/json',
+    Accept: 'application/json'
+  };
+
+  if (ADMIN_SECRET) {
+    headers['x-admin-secret'] = ADMIN_SECRET; // ⚠️ temporal
+  }
+
   try {
-    await fetch(apiUrl('/cards'), {
+    const res = await fetch(apiUrl('/cards'), {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-admin-secret': ADMIN_SECRET
-      },
+      headers,
       body: JSON.stringify(payload),
-      keepalive: true
-    })
-    localStorage.setItem(LS_KEY, JSON.stringify(payload))
-    window.dispatchEvent(new CustomEvent('cards:updated'))
-    return { ok: true }
+      keepalive: true,
+      credentials: 'omit'
+    });
+
+    if (!res.ok) {
+      // No frenamos la UX; guardamos local y avisamos estado
+      const body = await res.text().catch(() => '');
+      localStorage.setItem(LS_KEY, JSON.stringify(payload));
+      window.dispatchEvent(new CustomEvent('cards:updated'));
+      return { ok: false, status: res.status, body: body || null, local: true };
+    }
+
+    localStorage.setItem(LS_KEY, JSON.stringify(payload));
+    window.dispatchEvent(new CustomEvent('cards:updated'));
+    return { ok: true };
   } catch {
-    // Al menos cachear localmente
-    localStorage.setItem(LS_KEY, JSON.stringify(payload))
-    window.dispatchEvent(new CustomEvent('cards:updated'))
-    return { ok: false, local: true }
+    // Sin red: cache local silenciosa
+    localStorage.setItem(LS_KEY, JSON.stringify(payload));
+    window.dispatchEvent(new CustomEvent('cards:updated'));
+    return { ok: false, local: true };
   }
 }
