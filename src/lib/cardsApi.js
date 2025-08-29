@@ -24,7 +24,10 @@ function isAbsoluteHttpUrl(u) {
   return /^https?:\/\//i.test(u);
 }
 
-// Lectura remota con manejo de errores claro
+/* ─────────────────────────────
+   LECTURA
+   ───────────────────────────── */
+
 export async function fetchCards() {
   // Si no hay API configurada, usa cache local
   if (!API_BASE || !isAbsoluteHttpUrl(API_BASE)) {
@@ -50,7 +53,7 @@ export async function fetchCards() {
     const data = await res.json();
     localStorage.setItem(LS_KEY, JSON.stringify(data));
     return data;
-  } catch (err) {
+  } catch (_err) {
     // si falla la red/servidor, intenta fallback local
     const raw = localStorage.getItem(LS_KEY);
     if (raw) return JSON.parse(raw);
@@ -59,7 +62,46 @@ export async function fetchCards() {
   }
 }
 
-// Guardado remoto con errores diferenciados (401 vs otros)
+/* ─────────────────────────────
+   ESCRITURA (segura por defecto con UPSERT)
+   ───────────────────────────── */
+
+// Intenta usar POST /cards/upsert (merge por id). Si no existe, cae a PUT /cards.
+async function sendUpsertOrPut(payload) {
+  const headers = {
+    'Content-Type': 'application/json',
+    Accept: 'application/json'
+  };
+  if (ADMIN_SECRET) {
+    headers['x-admin-secret'] = ADMIN_SECRET; // ⚠️ temporal (no recomendado para prod)
+  }
+
+  // 1) Intentar UPSERT (no borra lo existente)
+  const upsertBody = {
+    cards: Array.isArray(payload?.cards) ? payload.cards : []
+  };
+
+  let res = await fetch(apiUrl('/cards/upsert'), {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(upsertBody),
+    credentials: 'omit'
+  });
+
+  // Si el endpoint no existe (404) o método no permitido (405), probamos PUT
+  if (res.status === 404 || res.status === 405) {
+    res = await fetch(apiUrl('/cards'), {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(payload),
+      credentials: 'omit'
+    });
+  }
+
+  return res;
+}
+
+// Guardado remoto con errores diferenciados (401 vs otros). Usa UPSERT por defecto.
 export async function saveCards(payload) {
   if (!API_BASE || !isAbsoluteHttpUrl(API_BASE)) {
     localStorage.setItem(LS_KEY, JSON.stringify(payload));
@@ -67,21 +109,7 @@ export async function saveCards(payload) {
     return { ok: true, local: true };
   }
 
-  const headers = {
-    'Content-Type': 'application/json',
-    Accept: 'application/json'
-  };
-
-  if (ADMIN_SECRET) {
-    headers['x-admin-secret'] = ADMIN_SECRET; // ⚠️ temporal (no recomendado para prod)
-  }
-
-  const res = await fetch(apiUrl('/cards'), {
-    method: 'PUT',
-    headers,
-    body: JSON.stringify(payload),
-    credentials: 'omit'
-  });
+  const res = await sendUpsertOrPut(payload);
 
   if (res.status === 401) {
     const body = await res.text().catch(() => '');
@@ -93,13 +121,18 @@ export async function saveCards(payload) {
     throw new Error(`save_failed (${res.status})${body ? `: ${body}` : ''}`);
   }
 
-  // Éxito
+  // Éxito: asumimos que payload ya representa el estado local deseado
   localStorage.setItem(LS_KEY, JSON.stringify(payload));
   window.dispatchEvent(new CustomEvent('cards:updated'));
-  return res.json().catch(() => ({ ok: true }));
+  // Intentamos devolver JSON si el server lo envió; sino, { ok: true }
+  try {
+    return await res.json();
+  } catch {
+    return { ok: true };
+  }
 }
 
-// Guardado pensado para "unload/ocultar pestaña" con keepalive
+// Guardado pensado para "unload/ocultar pestaña" con keepalive. Usa UPSERT por defecto.
 export async function saveCardsBackground(payload) {
   if (!API_BASE || !isAbsoluteHttpUrl(API_BASE)) {
     localStorage.setItem(LS_KEY, JSON.stringify(payload));
@@ -107,26 +140,36 @@ export async function saveCardsBackground(payload) {
     return { ok: true, local: true };
   }
 
-  const headers = {
-    'Content-Type': 'application/json',
-    Accept: 'application/json'
-  };
-
-  if (ADMIN_SECRET) {
-    headers['x-admin-secret'] = ADMIN_SECRET; // ⚠️ temporal
-  }
-
   try {
-    const res = await fetch(apiUrl('/cards'), {
-      method: 'PUT',
+    const headers = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json'
+    };
+    if (ADMIN_SECRET) {
+      headers['x-admin-secret'] = ADMIN_SECRET; // ⚠️ temporal
+    }
+
+    // Intentar UPSERT primero
+    let res = await fetch(apiUrl('/cards/upsert'), {
+      method: 'POST',
       headers,
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ cards: Array.isArray(payload?.cards) ? payload.cards : [] }),
       keepalive: true,
       credentials: 'omit'
     });
 
+    if (res.status === 404 || res.status === 405) {
+      // Fallback a PUT si el endpoint aún no está desplegado
+      res = await fetch(apiUrl('/cards'), {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify(payload),
+        keepalive: true,
+        credentials: 'omit'
+      });
+    }
+
     if (!res.ok) {
-      // No frenamos la UX; guardamos local y avisamos estado
       const body = await res.text().catch(() => '');
       localStorage.setItem(LS_KEY, JSON.stringify(payload));
       window.dispatchEvent(new CustomEvent('cards:updated'));
@@ -141,5 +184,49 @@ export async function saveCardsBackground(payload) {
     localStorage.setItem(LS_KEY, JSON.stringify(payload));
     window.dispatchEvent(new CustomEvent('cards:updated'));
     return { ok: false, local: true };
+  }
+}
+
+/* ─────────────────────────────
+   (Opcional) Reemplazo total explícito
+   ───────────────────────────── */
+// Si alguna vez necesitás **intencionalmente** reemplazar TODO desde el front:
+export async function replaceAllCards(payload) {
+  if (!API_BASE || !isAbsoluteHttpUrl(API_BASE)) {
+    localStorage.setItem(LS_KEY, JSON.stringify(payload));
+    window.dispatchEvent(new CustomEvent('cards:updated'));
+    return { ok: true, local: true };
+  }
+
+  const headers = {
+    'Content-Type': 'application/json',
+    Accept: 'application/json'
+  };
+  if (ADMIN_SECRET) {
+    headers['x-admin-secret'] = ADMIN_SECRET;
+  }
+
+  const res = await fetch(apiUrl('/cards'), {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify(payload),
+    credentials: 'omit'
+  });
+
+  if (res.status === 401) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`unauthorized (401)${body ? `: ${body}` : ''}`);
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`save_failed (${res.status})${body ? `: ${body}` : ''}`);
+  }
+
+  localStorage.setItem(LS_KEY, JSON.stringify(payload));
+  window.dispatchEvent(new CustomEvent('cards:updated'));
+  try {
+    return await res.json();
+  } catch {
+    return { ok: true };
   }
 }
