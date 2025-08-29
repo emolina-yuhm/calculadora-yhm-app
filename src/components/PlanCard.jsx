@@ -95,6 +95,31 @@ const PlanCard = forwardRef(function PlanCard(
       .sort((a, b) => a - b)
   }, [selectedCard])
 
+  // Entradas (cuotas/pct) normalizadas y ordenadas — para UI y métricas
+  const coefEntries = useMemo(() => {
+    if (!selectedCard) return []
+    return Object.entries(selectedCard.coeficientes || {})
+      .map(([k, v]) => ({ cuotas: Number(k), pct: Number(v) }))
+      .filter(x => Number.isFinite(x.cuotas) && x.cuotas > 0 && Number.isFinite(x.pct) && x.pct >= 0)
+      .sort((a, b) => a.cuotas - b.cuotas)
+  }, [selectedCard])
+
+  // Texto “tasas por cuota”
+  const tasasPorCuotaText = useMemo(() => {
+    if (!coefEntries.length) return '—'
+    return coefEntries.map(({ cuotas, pct }) => `${cuotas}: ${pct}%`).join(' • ')
+  }, [coefEntries])
+
+  // Resumen del plan (min, max, promedio de tasas)
+  const tasasResumen = useMemo(() => {
+    if (!coefEntries.length) return null
+    const pcts = coefEntries.map(e => e.pct)
+    const min = Math.min(...pcts)
+    const max = Math.max(...pcts)
+    const avg = pcts.reduce((a, b) => a + b, 0) / pcts.length
+    return { min, max, avg }
+  }, [coefEntries])
+
   // Cálculo de todos los planes segun coeficientes de la tarjeta
   const planes = useMemo(() => {
     if (!selectedCard) return []
@@ -138,36 +163,47 @@ const PlanCard = forwardRef(function PlanCard(
     `
   })
 
-  // Copiar SOLO los bloques de planes (sin encabezados/condiciones)
+  // Copiar SOLO el plan actual, incluyendo encabezado con Producto y Tarjeta
   const copyPlansOnly = async () => {
     if (!ready) {
       modal.warning('Faltan datos', 'Completá el plan antes de copiar.')
       return
     }
+
+    const header = [
+      `${title || 'Plan'}`,
+      `Producto: ${producto || '—'}`,
+      `Tarjeta: ${selectedCard?.nombre || selectedCard?.id || '—'}`,
+      '',
+      'Planes:'
+    ].filter(Boolean).join('\n')
+
     const bloques = [...planes]
       .sort((a, b) => (a.cuotas || 0) - (b.cuotas || 0))
       .map((p) =>
         [
           `Cuotas: ${p.cuotas}`,
-          `Valor de cuota: ${fmtARS(p.valorCuota)}`,   // 2 decimales
+          `Valor de cuota: ${fmtARS(p.valorCuota)}`,
           `Margen necesario: ${fmtARS(p.costoFinal)}`
         ].join('\n')
       )
       .join('\n\n')
 
+    const text = `${header}\n${bloques}`
+
     try {
-      await navigator.clipboard.writeText(bloques)
-      toast.success('Planes copiados.')
+      await navigator.clipboard.writeText(text)
+      toast.success('Plan copiado.')
     } catch {
       const ta = document.createElement('textarea')
-      ta.value = bloques
+      ta.value = text
       ta.style.position = 'fixed'
       ta.style.opacity = '0'
       document.body.appendChild(ta)
       ta.focus(); ta.select()
       try { document.execCommand('copy') } catch {}
       document.body.removeChild(ta)
-      toast.success('Planes copiados.')
+      toast.success('Plan copiado.')
     }
   }
 
@@ -223,7 +259,7 @@ const PlanCard = forwardRef(function PlanCard(
               type="button"
               onClick={copyPlansOnly}
               className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium ring-1 ring-emerald-200 text-emerald-900 bg-white hover:bg-emerald-50 active:bg-emerald-100"
-              title="Copiar solo los planes"
+              title="Copiar este plan (incluye Producto y Tarjeta)"
               disabled={!ready}
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -231,7 +267,7 @@ const PlanCard = forwardRef(function PlanCard(
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
               </svg>
-              Copiar plantilla
+              Copiar plan
             </button>
 
             <button
@@ -250,14 +286,26 @@ const PlanCard = forwardRef(function PlanCard(
 
             <button
               type="button"
-              onClick={handlePrint}
+              onClick={useReactToPrint({
+                contentRef: componentRef,
+                removeAfterPrint: false,
+                documentTitle: title || 'Plan',
+                pageStyle: `
+                  @page { margin: 10mm; }
+                  @media print {
+                    body * { visibility: hidden; }
+                    .print-solo, .print-solo * { visibility: visible; }
+                    .print-solo { position: static !important; left: auto !important; top: auto !important; }
+                  }
+                `
+              })}
               className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 active:bg-emerald-800"
               title="Imprimir / Exportar PDF"
               disabled={!ready}
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                 strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/>
+                <path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-3"/><path d="M3 21l7-7"/>
               </svg>
               Imprimir / PDF
             </button>
@@ -378,7 +426,7 @@ const PlanCard = forwardRef(function PlanCard(
                   ))}
                 </div>
 
-                {/* Detalle extendido (solo si NO es compacto) */}
+                {/* Detalle extendido (SOLO NO compacto) */}
                 {!isCompact && (
                   <div className="rounded-lg ring-1 ring-emerald-100 overflow-hidden">
                     <table className={`min-w-full ${tableText}`}>
@@ -391,6 +439,20 @@ const PlanCard = forwardRef(function PlanCard(
                           <td className="py-3 pl-3 sm:pl-4 pr-4 font-semibold text-emerald-900">Cuotas disponibles</td>
                           <td className="py-3 pr-3 sm:pr-4 text-emerald-900">
                             {availableCuotas.join(', ')}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td className="py-3 pl-3 sm:pl-4 pr-4 font-semibold text-emerald-900">Tasas por cuota</td>
+                          <td className="py-3 pr-3 sm:pr-4 text-emerald-900">
+                            {tasasPorCuotaText}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td className="py-3 pl-3 sm:pl-4 pr-4 font-semibold text-emerald-900">Resumen del plan</td>
+                          <td className="py-3 pr-3 sm:pr-4 text-emerald-900">
+                            {tasasResumen
+                              ? `min ${tasasResumen.min}% · max ${tasasResumen.max}% · prom ${Number(tasasResumen.avg).toFixed(2)}%`
+                              : '—'}
                           </td>
                         </tr>
                         <tr>

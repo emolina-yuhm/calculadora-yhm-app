@@ -10,6 +10,27 @@ import {
 import { getCards } from '../lib/cardsStorage'
 import { modal, toast } from '../lib/alerts'
 
+/* ======= Helpers locales ======= */
+const fmtARS = (n) =>
+  Number(n || 0).toLocaleString('es-AR', {
+    style: 'currency',
+    currency: 'ARS',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })
+
+// Lista ordenada "cuotas: porcentaje" desde coeficientes
+const buildTasasPorCuota = (coeficientes = {}) => {
+  const pares = Object.entries(coeficientes)
+    .map(([k, v]) => [Number(k), Number(v)])
+    .filter(([cuotas, pct]) => Number.isFinite(cuotas) && cuotas > 0 && Number.isFinite(pct) && pct >= 0)
+    .sort((a, b) => a[0] - b[0])
+
+  if (!pares.length) return '—'
+
+  return pares.map(([cuotas, pct]) => `${cuotas} cuotas: ${pct}%`).join('\n')
+}
+
 export default function PlansBoard() {
   const [sel, setSel] = useState({ A: true, B: false, C: false })
   const selectedKeys = useMemo(
@@ -47,7 +68,9 @@ export default function PlansBoard() {
     'inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium ring-1 ring-emerald-200 ' +
     'bg-white text-emerald-900 hover:bg-emerald-50 active:bg-emerald-100'
 
-  // Reconstruye la PLANTILLA COMPLETA (texto plano) desde el storage de un PlanCard
+  /* ─────────────────────────────
+     Build de PLANTILLA COMPLETA (se mantiene para WhatsApp)
+     ───────────────────────────── */
   const buildPlantillaFromKey = (key) => {
     const raw = localStorage.getItem(key)
     if (!raw) return null
@@ -60,12 +83,10 @@ export default function PlansBoard() {
     const card = cards.find(c => c.id === cardId)
     if (!card) return null
 
-    // Si la tarjeta no tiene coeficientes/cuotas configuradas, no hay nada que mostrar
     const coeficientes = card.coeficientes || {}
     const cuotasKeys = Object.keys(coeficientes)
     if (cuotasKeys.length === 0) return null
 
-    // Generar todos los planes (3, 6, 12, etc.) según tarjeta seleccionada
     const planes = calcularPlanesPorCoeficientes({
       precio,
       adelanto,
@@ -79,7 +100,6 @@ export default function PlansBoard() {
     })
   }
 
-  // Reconstruye la PLANTILLA COMPLETA (WhatsApp-friendly) desde el storage de un PlanCard
   const buildPlantillaWAFromKey = (key) => {
     const raw = localStorage.getItem(key)
     if (!raw) return null
@@ -109,16 +129,53 @@ export default function PlansBoard() {
     })
   }
 
+  /* ─────────────────────────────
+     NUEVO: Resumen simple para “Copiar seleccionados (texto)”
+     - SOLO planes seleccionados
+     - SIN plantilla
+     - Incluye Producto y Tarjeta
+     - Lista tasas por cuota
+     ───────────────────────────── */
+  const buildResumenSimpleFromKey = (key, tituloPlan) => {
+    const raw = localStorage.getItem(key)
+    if (!raw) return null
+    let st; try { st = JSON.parse(raw) } catch { return null }
+
+    const { producto = '', precio, adelanto, cardId } = st || {}
+    if (!cardId) return null
+
+    const cards = getCards() || []
+    const card = cards.find(c => c.id === cardId)
+    if (!card) return null
+
+    const coeficientes = card.coeficientes || {}
+    if (!Object.keys(coeficientes).length) return null
+
+    // Texto sin plantilla, con Producto + Tarjeta + Tasas por cuota
+    const lineas = [
+      `${tituloPlan || 'Plan'}`,
+      producto ? `Producto: ${producto}` : null,
+      card?.nombre ? `Tarjeta: ${card.nombre}` : `Tarjeta: ${card.id}`,
+      (precio != null) ? `Precio: ${fmtARS(precio)}` : null,
+      (adelanto != null && Number(adelanto) > 0) ? `Adelanto: ${fmtARS(adelanto)}` : null,
+      '',
+      'Tasas por cuota:',
+      buildTasasPorCuota(coeficientes)
+    ].filter(Boolean)
+
+    return lineas.join('\n')
+  }
+
   const copySelected = async () => {
     const parts = []
     if (selectedKeys.includes('A')) {
-      const s = buildPlantillaFromKey('fin_motos_plan_A_v1'); if (s) parts.push(s)
+      const s = buildResumenSimpleFromKey('fin_motos_plan_A_v1', 'Plan A'); if (s) parts.push(s)
     }
     if (selectedKeys.includes('B')) {
-      const s = buildPlantillaFromKey('fin_motos_plan_B_v1'); if (s) parts.push(s)
+      const s = buildResumenSimpleFromKey('fin_motos_plan_B_v1', 'Plan B'); if (s) parts.push(s)
     }
     if (selectedKeys.includes('C')) {
-      const s = buildPlantillaFromKey('fin_motos_plan_C_v1'); if (s) parts.push(s)
+      const s = buildResumenSimpleFromKey('fin_motos_plan_C_v1', 'Plan C'); if (s) parts.push(s)
     }
 
     if (parts.length === 0) {
@@ -129,14 +186,14 @@ export default function PlansBoard() {
     const text = parts.join('\n\n')
     try {
       await navigator.clipboard.writeText(text)
-      toast.success('Plantillas copiadas.')
+      toast.success('Planes seleccionados copiados.')
     } catch {
       const ta = document.createElement('textarea')
       ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'
       document.body.appendChild(ta); ta.focus(); ta.select()
       try { document.execCommand('copy') } catch {}
       document.body.removeChild(ta)
-      toast.success('Plantillas copiadas.')
+      toast.success('Planes seleccionados copiados.')
     }
   }
 
