@@ -1,5 +1,4 @@
 // src/components/PlanCard.jsx
-// src/components/PlanCard.jsx
 import React, { useEffect, useMemo, useRef, useState, forwardRef } from 'react'
 import { useReactToPrint } from 'react-to-print'
 import {
@@ -207,7 +206,7 @@ const PlanCard = forwardRef(function PlanCard(
     }
   }
 
-  // Copiar plantilla en formato WhatsApp para ESTE plan (sin tasas, con negritas)
+  // Copiar PLANTILLA completa en WhatsApp para ESTE plan (sin tasas, con condiciones)
   const copyTemplateWA = async () => {
     if (!ready) {
       modal.warning('Faltan datos', 'Completá el plan antes de copiar.')
@@ -232,7 +231,22 @@ const PlanCard = forwardRef(function PlanCard(
       ].join('\n'))
       .join('\n\n')
 
-    const text = `${encabezado}${cuerpo}`
+    const condiciones = [
+      '',
+      '',
+      '*CONDICIONES GENERALES*',
+      '',
+      '- Los precios indicados son sin incluir costos de patentamiento',
+      '- Puede usar varias tarjetas de crédito.',
+      '- El monto del patentamiento le informa el vendedor.',
+      '- Los precios están sujetos a modificaciones sin previo aviso.',
+      '',
+      '*VALIDEZ DEL PRESUPUESTO 24 hs*',
+      '',
+      '¿Le interesa este presupuesto?'
+    ].join('\n')
+
+    const text = `${encabezado}${cuerpo}${condiciones}`
 
     try {
       await navigator.clipboard.writeText(text)
@@ -305,7 +319,19 @@ const PlanCard = forwardRef(function PlanCard(
 
             <button
               type="button"
-              onClick={handlePrint}
+              onClick={useReactToPrint({
+                contentRef: componentRef,
+                removeAfterPrint: false,
+                documentTitle: title || 'Plan',
+                pageStyle: `
+                  @page { margin: 10mm; }
+                  @media print {
+                    body * { visibility: hidden; }
+                    .print-solo, .print-solo * { visibility: visible; }
+                    .print-solo { position: static !important; left: auto !important; top: auto !important; }
+                  }
+                `
+              })}
               className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 active:bg-emerald-800"
               title="Imprimir / Exportar PDF"
               disabled={!ready}
