@@ -17,13 +17,11 @@ const PlanCard = forwardRef(function PlanCard(
   const [open, setOpen] = useState(true)
   const [compact, setCompact] = useState(false)
 
-  // 🔐 Clave derivada POR CARD para no pisar Plan A/B/C entre sí
   const derivedStorageKey = useMemo(() => {
     const t = (title || 'Plan').trim().toLowerCase().replace(/\s+/g, '-')
     return `${storageKey}:${t}`
   }, [storageKey, title])
 
-  // Tarjetas (carga y refrescos)
   const [cards, setCards] = useState(() => getCards() || [])
   useEffect(() => {
     (async () => setCards((await loadCardsAsync()) || []))()
@@ -42,16 +40,15 @@ const PlanCard = forwardRef(function PlanCard(
     }
   }, [])
 
-  // Estado de entradas + persistencia
   const [producto, setProducto] = useState('')
-  const [precio, setPrecio] = useState('')     // guardamos SOLO dígitos
-  const [adelanto, setAdelanto] = useState('') // guardamos SOLO dígitos
+  const [precio, setPrecio] = useState('')     // solo dígitos
+  const [adelanto, setAdelanto] = useState('') // solo dígitos
   const [cardId, setCardId] = useState('')
 
   const hydratedRef = useRef(false)
   const persistTimer = useRef(null)
 
-  // Helpers de input: solo dígitos (eliminamos puntos, comas, $, espacios, etc.)
+  // limpiar a dígitos
   const digitsOnly = (s) => String(s || '').replace(/[^\d]/g, '')
   const onChangeDigits = (setter) => (e) => setter(digitsOnly(e.target.value))
   const onPasteDigits = (setter) => (e) => {
@@ -59,12 +56,9 @@ const PlanCard = forwardRef(function PlanCard(
       e.preventDefault()
       const text = (e.clipboardData || window.clipboardData).getData('text')
       setter(digitsOnly(text))
-    } catch {
-      /* fallback: el onChange volverá a limpiar */
-    }
+    } catch {}
   }
 
-  // Hidratar desde localStorage
   useEffect(() => {
     if (hydratedRef.current) return
     try {
@@ -84,7 +78,6 @@ const PlanCard = forwardRef(function PlanCard(
     hydratedRef.current = true
   }, [derivedStorageKey])
 
-  // Guardar en localStorage (debounced)
   useEffect(() => {
     if (!hydratedRef.current) return
     clearTimeout(persistTimer.current)
@@ -97,7 +90,6 @@ const PlanCard = forwardRef(function PlanCard(
     return () => clearTimeout(persistTimer.current)
   }, [producto, precio, adelanto, cardId, compact, open, derivedStorageKey])
 
-  // Defaults válidos para tarjeta
   useEffect(() => {
     if (cards.length === 0) { if (cardId) setCardId(''); return }
     if (!cardId || !cards.some(c => c.id === cardId)) setCardId(cards[0].id)
@@ -113,7 +105,6 @@ const PlanCard = forwardRef(function PlanCard(
       .sort((a, b) => a - b)
   }, [selectedCard])
 
-  // Entradas (cuotas/pct) normalizadas y ordenadas
   const coefEntries = useMemo(() => {
     if (!selectedCard) return []
     return Object.entries(selectedCard.coeficientes || {})
@@ -136,7 +127,6 @@ const PlanCard = forwardRef(function PlanCard(
     return { min, max, avg }
   }, [coefEntries])
 
-  // Cálculo de planes
   const planes = useMemo(() => {
     if (!selectedCard) return []
     return calcularPlanesPorCoeficientes({
@@ -156,7 +146,6 @@ const PlanCard = forwardRef(function PlanCard(
     !!selectedCard &&
     availableCuotas.length > 0
 
-  // UI helpers
   const inputBase =
     'mt-1 w-full rounded-md border border-emerald-200 bg-white px-3 py-2 text-sm ' +
     'focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500'
@@ -167,7 +156,6 @@ const PlanCard = forwardRef(function PlanCard(
   const sectionGap = isCompact ? 'gap-3' : 'gap-4'
   const cardPadding = isCompact ? 'p-3' : 'p-4'
 
-  // Print
   const componentRef = useRef(null)
   const handlePrint = useReactToPrint({
     contentRef: componentRef,
@@ -183,7 +171,6 @@ const PlanCard = forwardRef(function PlanCard(
     `
   })
 
-  // Limpiar SOLO este plan
   const clearPlan = () => {
     setProducto('')
     setPrecio('')
@@ -192,7 +179,7 @@ const PlanCard = forwardRef(function PlanCard(
     toast.info('Plan limpiado.')
   }
 
-  // Copiar SOLO el plan actual (texto plano)
+  // TEXTO — sin precio visible; con línea extra tras "A financiar"
   const copyPlansOnly = async () => {
     if (!ready) {
       modal.warning('Faltan datos', 'Completá el plan antes de copiar.')
@@ -201,13 +188,16 @@ const PlanCard = forwardRef(function PlanCard(
 
     const header = [
       `**${title || 'Plan'}**`,
+      '',
       `Producto: ${producto || '—'}`,
-      `Tarjeta: ${selectedCard?.nombre || selectedCard?.id || '—'}`,
-      `Precio: ${fmtARS(monto)}`,
-      `Adelanto: ${fmtARS(anticipo)}`,
+      '',
+      `Financiamiento: Tarjeta: ${selectedCard?.nombre || selectedCard?.id || '—'}`,
+      '',
+      `Anticipo: ${fmtARS(anticipo)}`,
+      '',
       `A financiar: ${fmtARS(aFinanciar)}`,
       '',
-      'Planes:'
+      '', // ← línea extra antes de las cuotas
     ].join('\n')
 
     const bloques = [...planes]
@@ -215,13 +205,13 @@ const PlanCard = forwardRef(function PlanCard(
       .map((p) =>
         [
           `Cuotas: ${p.cuotas}`,
-          `Valor de cuota: ${fmtARS(p.valorCuota)}`,
-          `Margen necesario: ${fmtARS(p.costoFinal)}`
+          `  Valor de cuota: ${fmtARS(p.valorCuota)}`,
+          `  Margen necesario: ${fmtARS(p.costoFinal)}`
         ].join('\n')
       )
       .join('\n\n')
 
-    const text = `${header}\n${bloques}`
+    const text = `${header}${bloques}\n`
 
     try {
       await navigator.clipboard.writeText(text)
@@ -239,7 +229,7 @@ const PlanCard = forwardRef(function PlanCard(
     }
   }
 
-  // Copiar PLANTILLA WA para ESTE plan
+  // WHATSAPP — sin precio visible; con línea extra tras "*A FINANCIAR*"
   const copyTemplateWA = async () => {
     if (!ready) {
       modal.warning('Faltan datos', 'Completá el plan antes de copiar.')
@@ -252,18 +242,20 @@ const PlanCard = forwardRef(function PlanCard(
       `*PRODUCTO:* ${String(producto || '—')}`,
       '',
       `*FINANCIAMIENTO:* Tarjeta: ${selectedCard?.nombre || selectedCard?.id || '—'}`,
-      `*PRECIO:* ${fmtARS(monto)}`,
-      `*ADELANTO:* ${fmtARS(anticipo)}`,
+      '',
+      `*ANTICIPO:* ${fmtARS(anticipo)}`,
+      '',
       `*A FINANCIAR:* ${fmtARS(aFinanciar)}`,
-      ''
+      '',
+      '', // ← línea extra antes de las cuotas
     ].join('\n')
 
     const cuerpo = [...planes]
       .sort((a, b) => (a.cuotas || 0) - (b.cuotas || 0))
       .map(p => [
         `*Cuotas:* ${p.cuotas}`,
-        `*Valor de cuota:* ${fmtARS(p.valorCuota)}`,
-        `*Margen necesario:* ${fmtARS(p.costoFinal)}`
+        `  Valor de cuota: ${fmtARS(p.valorCuota)}`,
+        `  Margen necesario: ${fmtARS(p.costoFinal)}`
       ].join('\n'))
       .join('\n\n')
 
@@ -328,7 +320,7 @@ const PlanCard = forwardRef(function PlanCard(
               type="button"
               onClick={copyPlansOnly}
               className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium ring-1 ring-emerald-200 text-emerald-900 bg-white hover:bg-emerald-50 active:bg-emerald-100"
-              title="Copiar este plan (incluye Producto, Tarjeta, Precio, Adelanto y A financiar)"
+              title="Copiar este plan (texto)"
               disabled={!ready}
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"

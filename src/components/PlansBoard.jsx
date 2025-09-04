@@ -2,22 +2,13 @@
 import React, { useMemo, useRef, useState } from 'react'
 import { useReactToPrint } from 'react-to-print'
 import PlanCard from './PlanCard'
-import { calcularPlanesPorCoeficientes, sanitizeNumber } from '../utils/finance'
+import { calcularPlanesPorCoeficientes, sanitizeNumber, fmtARS as fmtARSUtil } from '../utils/finance'
 import { getCards } from '../lib/cardsStorage'
 import { modal, toast } from '../lib/alerts'
 
-/* ======= Helpers locales ======= */
-const fmtARS = (n) =>
-  Number(n || 0).toLocaleString('es-AR', {
-    style: 'currency',
-    currency: 'ARS',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  })
-
+const fmtARS = (n) => fmtARSUtil(n)
 const normTitle = (t) => String(t || 'Plan').trim().toLowerCase().replace(/\s+/g, '-')
 
-// Mapeos de títulos y storageKeys usados por las cards
 const TITLES = { A: 'Plan A', B: 'Plan B', C: 'Plan C' }
 const STORAGE_KEYS = {
   A: 'fin_motos_plan_A_v1',
@@ -25,7 +16,6 @@ const STORAGE_KEYS = {
   C: 'fin_motos_plan_C_v1'
 }
 
-// Lee estado y planes desde storage/cards
 function readPlanState(storageKey, title) {
   const derivedKey = `${storageKey}:${normTitle(title)}`
   const keysToTry = [derivedKey, storageKey]
@@ -49,41 +39,19 @@ function readPlanState(storageKey, title) {
   if (!card) return null
 
   const coeficientes = card.coeficientes || {}
-  const cuotasKeys = Object.keys(coeficientes || {})
-  if (cuotasKeys.length === 0) return null
+  if (!Object.keys(coeficientes).length) return null
 
-  const planes = calcularPlanesPorCoeficientes({
-    precio,
-    adelanto,
-    coeficientes
-  })
-
+  const planes = calcularPlanesPorCoeficientes({ precio, adelanto, coeficientes })
   const anticipo = sanitizeNumber(adelanto)
   const monto = sanitizeNumber(precio)
-  const aFinanciar = Number.isFinite(planes?.[0]?.aFinanciar)
-    ? planes[0].aFinanciar
-    : Math.max(0, monto - anticipo)
+  const aFinanciar = Number.isFinite(planes?.[0]?.aFinanciar) ? planes[0].aFinanciar : Math.max(0, monto - anticipo)
 
-  return {
-    titulo: String(title || ''),
-    producto,
-    precio: monto,
-    adelanto: anticipo,
-    aFinanciar,
-    card,
-    planes
-  }
+  return { titulo: String(title || ''), producto, precio: monto, adelanto: anticipo, aFinanciar, card, planes }
 }
 
 export default function PlansBoard() {
   const [sel, setSel] = useState({ A: true, B: false, C: false })
-  const selectedKeys = useMemo(
-    () => Object.entries(sel).filter(([, v]) => v).map(([k]) => k),
-    [sel]
-  )
-  const toggle = (k) => setSel(prev => ({ ...prev, [k]: !prev[k] }))
-
-  // Revisiones por plan para forzar remount tras limpiar
+  const selectedKeys = useMemo(() => Object.entries(sel).filter(([, v]) => v).map(([k]) => k), [sel])
   const [rev, setRev] = useState({ A: 0, B: 0, C: 0 })
 
   const printRef = useRef(null)
@@ -112,26 +80,27 @@ export default function PlansBoard() {
   const btnDanger =
     'inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium ring-1 ring-rose-200 bg-white text-rose-800 hover:bg-rose-50 active:bg-rose-100'
 
-  /* ─────────────────────────────
-     COPIAR SELECCIONADOS (texto)
-     ───────────────────────────── */
+  /* Copiar seleccionados (TEXTO) — sin precio visible; con línea extra tras "A financiar" */
   const copySelected = async () => {
     const blocks = []
 
     const tryPush = (storageKey, tituloVisible) => {
       const st = readPlanState(storageKey, tituloVisible)
       if (!st) return
-      const { producto, precio, adelanto, aFinanciar, card, planes } = st
+      const { producto, adelanto, aFinanciar, card, planes } = st
 
       const header = [
         `**${tituloVisible}**`,
+        '',
         `Producto: ${producto || '—'}`,
-        `Tarjeta: ${card?.nombre || card?.id || '—'}`,
-        `Precio: ${fmtARS(precio)}`,
-        `Adelanto: ${fmtARS(adelanto)}`,
+        '',
+        `Financiamiento: Tarjeta: ${card?.nombre || card?.id || '—'}`,
+        '',
+        `Anticipo: ${fmtARS(adelanto)}`,
+        '',
         `A financiar: ${fmtARS(aFinanciar)}`,
         '',
-        'Planes:'
+        '', // ← línea extra antes de las cuotas
       ].join('\n')
 
       const cuerpo = planes
@@ -139,8 +108,8 @@ export default function PlansBoard() {
         .sort((a, b) => (a.cuotas || 0) - (b.cuotas || 0))
         .map(p => [
           `Cuotas: ${p.cuotas}`,
-          `Valor de cuota: ${fmtARS(p.valorCuota)}`,
-          `Margen necesario: ${fmtARS(p.costoFinal)}`
+          `  Valor de cuota: ${fmtARS(p.valorCuota)}`,
+          `  Margen necesario: ${fmtARS(p.costoFinal)}`
         ].join('\n'))
         .join('\n\n')
 
@@ -170,16 +139,14 @@ export default function PlansBoard() {
     }
   }
 
-  /* ─────────────────────────────
-     COPIAR SELECCIONADOS (WhatsApp)
-     ───────────────────────────── */
+  /* Copiar seleccionados (WHATSAPP) — sin precio visible; con línea extra tras "*A FINANCIAR*" */
   const copySelectedWA = async () => {
     const blocks = []
 
     const tryPush = (storageKey, tituloVisible) => {
       const st = readPlanState(storageKey, tituloVisible)
       if (!st) return
-      const { producto, precio, aFinanciar, adelanto, card, planes } = st
+      const { producto, aFinanciar, adelanto, card, planes } = st
 
       const encabezado = [
         '*PRESUPUESTO:*',
@@ -187,10 +154,12 @@ export default function PlansBoard() {
         `*PRODUCTO:* ${String(producto || '—')}`,
         '',
         `*FINANCIAMIENTO:* Tarjeta: ${card?.nombre || card?.id || '—'}`,
-        `*PRECIO:* ${fmtARS(precio)}`,
-        `*ADELANTO:* ${fmtARS(adelanto)}`,
+        '',
+        `*ANTICIPO:* ${fmtARS(adelanto)}`,
+        '',
         `*A FINANCIAR:* ${fmtARS(aFinanciar)}`,
-        ''
+        '',
+        '', // ← línea extra antes de las cuotas
       ].join('\n')
 
       const cuerpo = planes
@@ -198,8 +167,8 @@ export default function PlansBoard() {
         .sort((a, b) => (a.cuotas || 0) - (b.cuotas || 0))
         .map(p => [
           `*Cuotas:* ${p.cuotas}`,
-          `*Valor de cuota:* ${fmtARS(p.valorCuota)}`,
-          `*Margen necesario:* ${fmtARS(p.costoFinal)}`
+          `  Valor de cuota: ${fmtARS(p.valorCuota)}`,
+          `  Margen necesario: ${fmtARS(p.costoFinal)}`
         ].join('\n'))
         .join('\n\n')
 
@@ -245,9 +214,7 @@ export default function PlansBoard() {
     }
   }
 
-  /* ─────────────────────────────
-     LIMPIAR SELECCIONADOS
-     ───────────────────────────── */
+  /* Limpiar seleccionados */
   const removePlanLocalState = (storageKey, title) => {
     const derivedKey = `${storageKey}:${normTitle(title)}`
     try { localStorage.removeItem(derivedKey) } catch {}
@@ -259,12 +226,10 @@ export default function PlansBoard() {
     if (selectedKeys.includes('A')) toClear.push('A')
     if (selectedKeys.includes('B')) toClear.push('B')
     if (selectedKeys.includes('C')) toClear.push('C')
-
     if (!toClear.length) {
       modal.warning('Nada para limpiar', 'Marcá al menos un plan para limpiar sus campos.')
       return
     }
-
     toClear.forEach(k => removePlanLocalState(STORAGE_KEYS[k], TITLES[k]))
     setRev(prev => {
       const next = { ...prev }
@@ -298,7 +263,6 @@ export default function PlansBoard() {
             Copiar seleccionados (WhatsApp)
           </button>
           <button className={btnDanger} onClick={clearSelected} disabled={selectedKeys.length === 0}>
-            {/* ícono tacho */}
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 -ml-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
               strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M3 6h18"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/>
@@ -318,16 +282,14 @@ export default function PlansBoard() {
         <PlanCard key={`C-${rev.C}`} title={TITLES.C} storageKey={STORAGE_KEYS.C} />
       </div>
 
-      {/* Contenedor de impresión: lo manejás como ya definiste (si usás PrintPlan liviano, dejalo aquí) */}
+      {/* Contenedor de impresión */}
       <div
         id="print-collection"
         ref={printRef}
         className="absolute -left-[99999px] top-0 w-[900px] print:static print:left-auto print:top-auto print:w-auto"
         aria-hidden="true"
       >
-        <div className="p-0">
-          {/* podrías renderizar un componente liviano de impresión si lo tenés */}
-        </div>
+        <div className="p-0" />
       </div>
     </>
   )
