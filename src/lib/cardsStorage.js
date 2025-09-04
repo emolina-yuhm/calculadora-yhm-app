@@ -25,7 +25,7 @@ const writeLocal = (payload) => {
 }
 
 /* ─────────────────────────────
-   Normalización de coeficientes
+   Normalización
    ───────────────────────────── */
 const normalizeCoefficients = (coeficientes) => {
   const out = {}
@@ -40,6 +40,24 @@ const normalizeCoefficients = (coeficientes) => {
   return out
 }
 
+const normalizeCards = (cards) =>
+  (Array.isArray(cards) ? cards : []).map((c) => ({
+    ...c,
+    coeficientes: normalizeCoefficients(c.coeficientes),
+  }))
+
+/* ─────────────────────────────
+   Eventos
+   ───────────────────────────── */
+const dispatchCardsUpdated = () => {
+  try {
+    const detail = { version: cache?.version ?? 1, at: Date.now() }
+    window.dispatchEvent(new CustomEvent('cards:updated', { detail }))
+  } catch {
+    // ambientes sin window/CustomEvent
+  }
+}
+
 /* ─────────────────────────────
    API pública
    ───────────────────────────── */
@@ -49,28 +67,29 @@ export const getCards = () => {
   if (cache) return cache.cards || []
   const local = readLocal()
   if (local && Array.isArray(local.cards)) {
-    cache = local
-    return local.cards
+    const cards = normalizeCards(local.cards)
+    cache = { version: Number(local.version || 1), cards }
+    return cards
   }
   return []
 }
 
 /** Carga las cards desde el backend y persiste en cache + localStorage */
 export const loadCardsAsync = async () => {
-  cache = await fetchCards()
-  // Normalizamos coeficientes de todas las cards para evitar valores raros
-  const cards = (cache.cards || []).map((c) => ({
-    ...c,
-    coeficientes: normalizeCoefficients(c.coeficientes),
-  }))
-  cache = { version: Number(cache.version || 1), cards }
+  const server = await fetchCards()
+  const cards = normalizeCards(server?.cards || [])
+  cache = { version: Number(server?.version || 1), cards }
   writeLocal(cache)
+  dispatchCardsUpdated()
   return cache.cards
 }
 
 /** Crea/actualiza una card por id y persiste en backend + localStorage */
 export const upsertCard = async (card) => {
-  if (!cache) cache = await fetchCards()
+  if (!cache) {
+    const server = await fetchCards()
+    cache = { version: Number(server?.version || 1), cards: normalizeCards(server?.cards || []) }
+  }
 
   const cards = [...(cache.cards || [])]
   const idx = cards.findIndex((c) => c.id === card.id)
@@ -86,16 +105,21 @@ export const upsertCard = async (card) => {
   cache = { version: (Number(cache.version) || 1) + 1, cards }
   await saveCards(cache)
   writeLocal(cache)
+  dispatchCardsUpdated()
   return cache.cards
 }
 
 /** Elimina una card por id y persiste en backend + localStorage */
 export const deleteCard = async (id) => {
-  if (!cache) cache = await fetchCards()
+  if (!cache) {
+    const server = await fetchCards()
+    cache = { version: Number(server?.version || 1), cards: normalizeCards(server?.cards || []) }
+  }
   const cards = (cache.cards || []).filter((c) => c.id !== id)
   cache = { version: (Number(cache.version) || 1) + 1, cards }
   await saveCards(cache)
   writeLocal(cache)
+  dispatchCardsUpdated()
   return cache.cards
 }
 

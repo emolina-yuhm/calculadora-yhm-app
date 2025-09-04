@@ -1,4 +1,4 @@
-// utils/finance.js
+// src/utils/finance.js
 
 export const fmtARS = (n) =>
   Number(n || 0).toLocaleString('es-AR', {
@@ -73,27 +73,45 @@ export const calcularPlanesPorCoeficientes = ({ precio, adelanto = 0, coeficient
 
 /**
  * Construye el bloque de texto EXACTO para “Copiar plan en plantilla” (texto plano).
- * Sin líneas de "/" al inicio/fin.
+ * Ahora incluye, si se provee:
+ *  - Adelanto
+ *  - A financiar (si se pasa `aFinanciar` o si se pasa `precio` para calcularlo).
  *
  * params:
  * - producto: string
  * - tarjetaNombre: string
  * - planes: array de { cuotas, valorCuota, costoFinal }
+ * - adelanto?: number | string
+ * - aFinanciar?: number | string
+ * - precio?: number | string (solo si querés que se calcule aFinanciar = precio - adelanto)
  *
- * Retorna string listo para copiar al portapapeles.
+ * Retorna string listo para copiar.
  */
-export const plantillaPresupuesto = ({ producto = '', tarjetaNombre = '', planes = [] }) => {
+export const plantillaPresupuesto = ({
+  producto = '',
+  tarjetaNombre = '',
+  planes = [],
+  adelanto = 0,
+  aFinanciar = null,
+  precio = null,
+}) => {
   const ordenados = [...planes].sort((a, b) => (a.cuotas || 0) - (b.cuotas || 0));
 
   const bloquesPlanes = ordenados
     .map((p) =>
       [
         `Cuotas: ${p.cuotas}`,
-        `Valor de cuota: ${fmtARS(p.valorCuota)}`,   // 2 decimales en plantilla
+        `Valor de cuota: ${fmtARS(p.valorCuota)}`, // 2 decimales en plantilla
         `Margen necesario: ${fmtARS(p.costoFinal)}`,
       ].join('\n')
     )
     .join('\n\n');
+
+  const anticipo = sanitizeNumber(adelanto);
+  let aFin = aFinanciar !== null && aFinanciar !== undefined ? sanitizeNumber(aFinanciar) : null;
+  if (aFin === null && precio !== null && precio !== undefined) {
+    aFin = Math.max(0, sanitizeNumber(precio) - anticipo);
+  }
 
   const lineas = [
     'PRESUPUESTO',
@@ -101,19 +119,20 @@ export const plantillaPresupuesto = ({ producto = '', tarjetaNombre = '', planes
     `Producto: ${producto}`,
     '',
     `Financiamiento - Tarjeta: ${tarjetaNombre}`,
-    '',
+    ...(anticipo > 0 ? ['', `Adelanto: ${fmtARS(anticipo)}`] : []),
+    ...(aFin !== null ? [`A financiar: ${fmtARS(aFin)}`, ''] : ['']),
     bloquesPlanes,
     '',
-    'CONDICIONES GENERALES ',
+    'CONDICIONES GENERALES',
     '',
-    '-Los precios indicados son sin incluir costos de patentamiento',
-    '-Puede usar varias tarjetas de crédito.',
-    '-El monto del patentamiento le informa el vendedor.',
-    '-Los precios están sujetos a modificaciones sin previo aviso.',
+    '- Los precios indicados son sin incluir costos de patentamiento',
+    '- Puede usar varias tarjetas de crédito.',
+    '- El monto del patentamiento le informa el vendedor.',
+    '- Los precios están sujetos a modificaciones sin previo aviso.',
     '',
     'VALIDEZ DEL PRESUPUESTO 24 hs',
     '',
-    'Le interesa este presupuesto?',
+    '¿Le interesa este presupuesto?',
   ];
 
   // Evita dobles saltos consecutivos iniciales por seguridad
@@ -121,11 +140,17 @@ export const plantillaPresupuesto = ({ producto = '', tarjetaNombre = '', planes
 };
 
 /**
- * Versión WhatsApp-friendly con *negritas* (sin líneas de "/").
- * Negritas en: PRESUPUESTO:, PRODUCTO:, FINANCIAMIENTO:, Cuotas: N, CONDICIONES GENERALES,
- * VALIDEZ DEL PRESUPUESTO 24 hs, Le interesa este presupuesto?
+ * Versión WhatsApp-friendly con *negritas*.
+ * También incluye Adelanto y A financiar cuando corresponde.
  */
-export const plantillaPresupuestoWA = ({ producto = '', tarjetaNombre = '', planes = [] }) => {
+export const plantillaPresupuestoWA = ({
+  producto = '',
+  tarjetaNombre = '',
+  planes = [],
+  adelanto = 0,
+  aFinanciar = null,
+  precio = null,
+}) => {
   const ordenados = [...planes].sort((a, b) => (a.cuotas || 0) - (b.cuotas || 0));
 
   const bloquesPlanes = ordenados
@@ -138,25 +163,32 @@ export const plantillaPresupuestoWA = ({ producto = '', tarjetaNombre = '', plan
     )
     .join('\n\n');
 
+  const anticipo = sanitizeNumber(adelanto);
+  let aFin = aFinanciar !== null && aFinanciar !== undefined ? sanitizeNumber(aFinanciar) : null;
+  if (aFin === null && precio !== null && precio !== undefined) {
+    aFin = Math.max(0, sanitizeNumber(precio) - anticipo);
+  }
+
   const lineas = [
     '*PRESUPUESTO:*',
     '',
     `*PRODUCTO:* ${producto}`,
     '',
     `*FINANCIAMIENTO:* Tarjeta: ${tarjetaNombre}`,
-    '',
+    ...(anticipo > 0 ? [`*ADELANTO:* ${fmtARS(anticipo)}`] : []),
+    ...(aFin !== null ? [`*A FINANCIAR:* ${fmtARS(aFin)}`, ''] : ['']),
     bloquesPlanes,
     '',
     '*CONDICIONES GENERALES*',
     '',
-    '-Los precios indicados son sin incluir costos de patentamiento',
-    '-Puede usar varias tarjetas de crédito.',
-    '-El monto del patentamiento le informa el vendedor.',
-    '-Los precios están sujetos a modificaciones sin previo aviso.',
+    '- Los precios indicados son sin incluir costos de patentamiento',
+    '- Puede usar varias tarjetas de crédito.',
+    '- El monto del patentamiento le informa el vendedor.',
+    '- Los precios están sujetos a modificaciones sin previo aviso.',
     '',
     '*VALIDEZ DEL PRESUPUESTO 24 hs*',
     '',
-    '*Le interesa este presupuesto?*',
+    '¿Le interesa este presupuesto?',
   ];
 
   return lineas.filter((l, i) => !(l === '' && lineas[i - 1] === '')).join('\n');

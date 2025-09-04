@@ -2,7 +2,7 @@
 import React, { useMemo, useRef, useState } from 'react'
 import { useReactToPrint } from 'react-to-print'
 import PlanCard from './PlanCard'
-import { calcularPlanesPorCoeficientes } from '../utils/finance'
+import { calcularPlanesPorCoeficientes, sanitizeNumber } from '../utils/finance'
 import { getCards } from '../lib/cardsStorage'
 import { modal, toast } from '../lib/alerts'
 
@@ -15,12 +15,34 @@ const fmtARS = (n) =>
     maximumFractionDigits: 2
   })
 
+const normTitle = (t) => String(t || 'Plan').trim().toLowerCase().replace(/\s+/g, '-')
+
+// Mapeos de títulos y storageKeys usados por las cards
+const TITLES = { A: 'Plan A', B: 'Plan B', C: 'Plan C' }
+const STORAGE_KEYS = {
+  A: 'fin_motos_plan_A_v1',
+  B: 'fin_motos_plan_B_v1',
+  C: 'fin_motos_plan_C_v1'
+}
+
 // Obtiene estado guardado de un PlanCard desde localStorage y resuelve tarjeta/planes
-function readPlanState(storageKey) {
-  const raw = localStorage.getItem(storageKey)
-  if (!raw) return null
-  let st; try { st = JSON.parse(raw) } catch { return null }
-  const { producto = '', precio, adelanto, cardId } = st || {}
+// Soporta la clave derivada (storageKey + ":" + title-normalizado) y la clave "cruda" (compatibilidad).
+function readPlanState(storageKey, title) {
+  const derivedKey = `${storageKey}:${normTitle(title)}`
+  const keysToTry = [derivedKey, storageKey] // primero la derivada (PlanCard nuevo), luego la cruda (legacy)
+
+  let parsed = null
+  for (const k of keysToTry) {
+    const raw = localStorage.getItem(k)
+    if (!raw) continue
+    try {
+      const st = JSON.parse(raw)
+      if (st && typeof st === 'object') { parsed = st; break }
+    } catch { /* ignore */ }
+  }
+  if (!parsed) return null
+
+  const { producto = '', precio, adelanto, cardId } = parsed || {}
   if (!cardId) return null
 
   const cards = getCards() || []
@@ -37,11 +59,19 @@ function readPlanState(storageKey) {
     coeficientes
   })
 
+  // a financiar (es constante para todos los planes; lo tomamos del primero o calculamos)
+  const anticipo = sanitizeNumber(adelanto)
+  const monto = sanitizeNumber(precio)
+  const aFinanciar = Number.isFinite(planes?.[0]?.aFinanciar)
+    ? planes[0].aFinanciar
+    : Math.max(0, monto - anticipo)
+
   return {
-    titulo: '',
+    titulo: String(title || ''),
     producto,
     precio,
     adelanto,
+    aFinanciar,
     card,
     planes
   }
@@ -54,6 +84,15 @@ export default function PlansBoard() {
     [sel]
   )
   const toggle = (k) => setSel(prev => ({ ...prev, [k]: !prev[k] }))
+
+  // Revisiones por plan para forzar remount tras limpiar
+  const [rev, setRev] = useState({ A: 0, B: 0, C: 0 })
+  const bumpRevs = (letters) =>
+    setRev(prev => {
+      const next = { ...prev }
+      letters.forEach(k => { next[k] = (prev[k] || 0) + 1 })
+      return next
+    })
 
   const printRef = useRef(null)
   const handlePrintSelected = useReactToPrint({
@@ -81,6 +120,9 @@ export default function PlansBoard() {
   const btnGhost =
     'inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium ring-1 ring-emerald-200 ' +
     'bg-white text-emerald-900 hover:bg-emerald-50 active:bg-emerald-100'
+  const btnDanger =
+    'inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium ring-1 ring-rose-200 ' +
+    'bg-white text-rose-800 hover:bg-rose-50 active:bg-rose-100'
 
   /* ─────────────────────────────
      COPIAR SELECCIONADOS (solo texto, SIN plantilla, SIN tasas)
@@ -88,18 +130,19 @@ export default function PlansBoard() {
   const copySelected = async () => {
     const blocks = []
 
-    const tryPush = (storageKey, titulo) => {
-      const st = readPlanState(storageKey)
+    const tryPush = (storageKey, tituloVisible) => {
+      const st = readPlanState(storageKey, tituloVisible)
       if (!st) return
-      const { producto, precio, adelanto, card, planes } = st
+      const { producto, precio, adelanto, aFinanciar, card, planes } = st
 
       // Título en negrita (Markdown-like)
       const header = [
-        `**${titulo}**`,
+        `**${tituloVisible}**`,
         `Producto: ${producto || '—'}`,
         `Tarjeta: ${card?.nombre || card?.id || '—'}`,
         `Precio: ${fmtARS(precio)}`,
         `Adelanto: ${fmtARS(adelanto)}`,
+        `A financiar: ${fmtARS(aFinanciar)}`,
         ''
       ].join('\n')
 
@@ -117,9 +160,9 @@ export default function PlansBoard() {
       blocks.push(`${header}${cuerpo}`)
     }
 
-    if (selectedKeys.includes('A')) tryPush('fin_motos_plan_A_v1', 'Plan A')
-    if (selectedKeys.includes('B')) tryPush('fin_motos_plan_B_v1', 'Plan B')
-    if (selectedKeys.includes('C')) tryPush('fin_motos_plan_C_v1', 'Plan C')
+    if (selectedKeys.includes('A')) tryPush(STORAGE_KEYS.A, TITLES.A)
+    if (selectedKeys.includes('B')) tryPush(STORAGE_KEYS.B, TITLES.B)
+    if (selectedKeys.includes('C')) tryPush(STORAGE_KEYS.C, TITLES.C)
 
     if (!blocks.length) {
       modal.warning('Nada para copiar', 'Completá al menos un plan con tarjeta y cuotas configuradas.')
@@ -142,20 +185,14 @@ export default function PlansBoard() {
 
   /* ─────────────────────────────
      COPIAR SELECCIONADOS (WHATSAPP) — con NEGRITAS, sin tasas, sin duplicados
-     Formato:
-       *PRESUPUESTO:*
-       *PRODUCTO:* ...
-       *FINANCIAMIENTO:* Tarjeta: ...
-       (listado de cuotas)
-     + Condiciones generales UNA SOLA VEZ al final
      ───────────────────────────── */
   const copySelectedWA = async () => {
     const blocks = []
 
-    const tryPush = (storageKey) => {
-      const st = readPlanState(storageKey)
+    const tryPush = (storageKey, tituloVisible) => {
+      const st = readPlanState(storageKey, tituloVisible)
       if (!st) return
-      const { producto, card, planes } = st
+      const { producto, aFinanciar, adelanto, card, planes } = st
 
       const encabezado = [
         '*PRESUPUESTO:*',
@@ -163,6 +200,8 @@ export default function PlansBoard() {
         `*PRODUCTO:* ${String(producto || '—')}`,
         '',
         `*FINANCIAMIENTO:* Tarjeta: ${card?.nombre || card?.id || '—'}`,
+        `*ADELANTO:* ${fmtARS(adelanto)}`,
+        `*A FINANCIAR:* ${fmtARS(aFinanciar)}`,
         ''
       ].join('\n')
 
@@ -179,9 +218,9 @@ export default function PlansBoard() {
       blocks.push(`${encabezado}${cuerpo}`)
     }
 
-    if (selectedKeys.includes('A')) tryPush('fin_motos_plan_A_v1')
-    if (selectedKeys.includes('B')) tryPush('fin_motos_plan_B_v1')
-    if (selectedKeys.includes('C')) tryPush('fin_motos_plan_C_v1')
+    if (selectedKeys.includes('A')) tryPush(STORAGE_KEYS.A, TITLES.A)
+    if (selectedKeys.includes('B')) tryPush(STORAGE_KEYS.B, TITLES.B)
+    if (selectedKeys.includes('C')) tryPush(STORAGE_KEYS.C, TITLES.C)
 
     if (!blocks.length) {
       modal.warning('Nada para copiar', 'Completá al menos un plan con tarjeta y cuotas configuradas.')
@@ -218,19 +257,44 @@ export default function PlansBoard() {
     }
   }
 
+  /* ─────────────────────────────
+     LIMPIAR SELECCIONADOS (borra estado y remonta solo esos PlanCard)
+     ───────────────────────────── */
+  const removePlanLocalState = (storageKey, title) => {
+    const derivedKey = `${storageKey}:${normTitle(title)}`
+    try { localStorage.removeItem(derivedKey) } catch {}
+    try { localStorage.removeItem(storageKey) } catch {}
+  }
+
+  const clearSelected = () => {
+    const toClear = []
+    if (selectedKeys.includes('A')) toClear.push('A')
+    if (selectedKeys.includes('B')) toClear.push('B')
+    if (selectedKeys.includes('C')) toClear.push('C')
+
+    if (!toClear.length) {
+      modal.warning('Nada para limpiar', 'Marcá al menos un plan para limpiar sus campos.')
+      return
+    }
+
+    toClear.forEach(k => removePlanLocalState(STORAGE_KEYS[k], TITLES[k]))
+    bumpRevs(toClear)
+    toast.success('Planes seleccionados limpiados.')
+  }
+
   return (
     <>
       {/* Barra de acciones */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div className="flex flex-wrap items-center gap-2">
           <button className={chip} onClick={() => toggle('A')}>
-            <input type="checkbox" className="mr-1 accent-emerald-600" checked={sel.A} readOnly /> Plan A
+            <input type="checkbox" className="mr-1 accent-emerald-600" checked={sel.A} readOnly /> {TITLES.A}
           </button>
           <button className={chip} onClick={() => toggle('B')}>
-            <input type="checkbox" className="mr-1 accent-emerald-600" checked={sel.B} readOnly /> Plan B
+            <input type="checkbox" className="mr-1 accent-emerald-600" checked={sel.B} readOnly /> {TITLES.B}
           </button>
           <button className={chip} onClick={() => toggle('C')}>
-            <input type="checkbox" className="mr-1 accent-emerald-600" checked={sel.C} readOnly /> Plan C
+            <input type="checkbox" className="mr-1 accent-emerald-600" checked={sel.C} readOnly /> {TITLES.C}
           </button>
         </div>
 
@@ -241,6 +305,14 @@ export default function PlansBoard() {
           <button className={btnGhost} onClick={copySelectedWA} disabled={selectedKeys.length === 0}>
             Copiar seleccionados (WhatsApp)
           </button>
+          <button className={btnDanger} onClick={clearSelected} disabled={selectedKeys.length === 0}>
+            {/* ícono tacho */}
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 -ml-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 6h18"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/>
+            </svg>
+            Limpiar seleccionados
+          </button>
           <button className={btnPrimary} onClick={handlePrintSelected} disabled={selectedKeys.length === 0}>
             Imprimir seleccionados (compacto)
           </button>
@@ -249,9 +321,9 @@ export default function PlansBoard() {
 
       {/* Tres planes visibles — NO imprimir */}
       <div className="grid gap-4 print:hidden">
-        <PlanCard title="Plan A" storageKey="fin_motos_plan_A_v1" />
-        <PlanCard title="Plan B" storageKey="fin_motos_plan_B_v1" />
-        <PlanCard title="Plan C" storageKey="fin_motos_plan_C_v1" />
+        <PlanCard key={`A-${rev.A}`} title={TITLES.A} storageKey={STORAGE_KEYS.A} />
+        <PlanCard key={`B-${rev.B}`} title={TITLES.B} storageKey={STORAGE_KEYS.B} />
+        <PlanCard key={`C-${rev.C}`} title={TITLES.C} storageKey={STORAGE_KEYS.C} />
       </div>
 
       {/* Contenedor de impresión: SIEMPRE montado, pero FUERA de pantalla (no hidden) */}
@@ -264,17 +336,17 @@ export default function PlansBoard() {
         <div className="p-0">
           {selectedKeys.includes('A') && (
             <section style={{ pageBreakInside: 'avoid', breakInside: 'avoid', marginBottom: '10mm' }}>
-              <PlanCard title="Plan A" storageKey="fin_motos_plan_A_v1" forceCompact hideActions />
+              <PlanCard key={`print-A-${rev.A}`} title={TITLES.A} storageKey={STORAGE_KEYS.A} forceCompact hideActions />
             </section>
           )}
           {selectedKeys.includes('B') && (
             <section style={{ pageBreakInside: 'avoid', breakInside: 'avoid', marginBottom: '10mm' }}>
-              <PlanCard title="Plan B" storageKey="fin_motos_plan_B_v1" forceCompact hideActions />
+              <PlanCard key={`print-B-${rev.B}`} title={TITLES.B} storageKey={STORAGE_KEYS.B} forceCompact hideActions />
             </section>
           )}
           {selectedKeys.includes('C') && (
             <section style={{ pageBreakInside: 'avoid', breakInside: 'avoid', marginBottom: '10mm' }}>
-              <PlanCard title="Plan C" storageKey="fin_motos_plan_C_v1" forceCompact hideActions />
+              <PlanCard key={`print-C-${rev.C}`} title={TITLES.C} storageKey={STORAGE_KEYS.C} forceCompact hideActions />
             </section>
           )}
         </div>

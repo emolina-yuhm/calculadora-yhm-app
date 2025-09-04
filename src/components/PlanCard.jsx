@@ -17,6 +17,12 @@ const PlanCard = forwardRef(function PlanCard(
   const [open, setOpen] = useState(true)
   const [compact, setCompact] = useState(false)
 
+  // 🔐 Clave derivada POR CARD para no pisar Plan A/B/C entre sí
+  const derivedStorageKey = useMemo(() => {
+    const t = (title || 'Plan').trim().toLowerCase().replace(/\s+/g, '-')
+    return `${storageKey}:${t}`
+  }, [storageKey, title])
+
   // Tarjetas (carga y refrescos)
   const [cards, setCards] = useState(() => getCards() || [])
   useEffect(() => {
@@ -49,7 +55,7 @@ const PlanCard = forwardRef(function PlanCard(
   useEffect(() => {
     if (hydratedRef.current) return
     try {
-      const raw = localStorage.getItem(storageKey)
+      const raw = localStorage.getItem(derivedStorageKey)
       if (raw) {
         const st = JSON.parse(raw)
         if (st && typeof st === 'object') {
@@ -63,7 +69,7 @@ const PlanCard = forwardRef(function PlanCard(
       }
     } catch {}
     hydratedRef.current = true
-  }, [storageKey])
+  }, [derivedStorageKey])
 
   // Guardar en localStorage (debounced)
   useEffect(() => {
@@ -71,12 +77,12 @@ const PlanCard = forwardRef(function PlanCard(
     clearTimeout(persistTimer.current)
     persistTimer.current = setTimeout(() => {
       localStorage.setItem(
-        storageKey,
+        derivedStorageKey,
         JSON.stringify({ producto, precio, adelanto, cardId, compact, open })
       )
     }, 250)
     return () => clearTimeout(persistTimer.current)
-  }, [producto, precio, adelanto, cardId, compact, open, storageKey])
+  }, [producto, precio, adelanto, cardId, compact, open, derivedStorageKey])
 
   // Defaults válidos para tarjeta
   useEffect(() => {
@@ -129,9 +135,13 @@ const PlanCard = forwardRef(function PlanCard(
     })
   }, [precio, adelanto, selectedCard])
 
+  const monto = sanitizeNumber(precio)
+  const anticipo = sanitizeNumber(adelanto)
+  const aFinanciar = Math.max(0, monto - anticipo)
+
   const ready =
-    sanitizeNumber(precio) > 0 &&
-    sanitizeNumber(adelanto) >= 0 &&
+    monto > 0 &&
+    anticipo >= 0 &&
     !!selectedCard &&
     availableCuotas.length > 0
 
@@ -162,6 +172,16 @@ const PlanCard = forwardRef(function PlanCard(
     `
   })
 
+  // 🔄 Limpiar SOLO este plan
+  const clearPlan = () => {
+    setProducto('')
+    setPrecio('')
+    setAdelanto('')
+    // mantenemos la tarjeta seleccionada para no romper el flujo
+    try { localStorage.removeItem(derivedStorageKey) } catch {}
+    toast.info('Plan limpiado.')
+  }
+
   // Copiar SOLO el plan actual (sin tasas), con encabezado y título en negrita
   const copyPlansOnly = async () => {
     if (!ready) {
@@ -173,6 +193,8 @@ const PlanCard = forwardRef(function PlanCard(
       `**${title || 'Plan'}**`,
       `Producto: ${producto || '—'}`,
       `Tarjeta: ${selectedCard?.nombre || selectedCard?.id || '—'}`,
+      `Adelanto: ${fmtARS(anticipo)}`,
+      `A financiar: ${fmtARS(aFinanciar)}`,
       '',
       'Planes:'
     ].join('\n')
@@ -219,6 +241,8 @@ const PlanCard = forwardRef(function PlanCard(
       `*PRODUCTO:* ${String(producto || '—')}`,
       '',
       `*FINANCIAMIENTO:* Tarjeta: ${selectedCard?.nombre || selectedCard?.id || '—'}`,
+      `*ADELANTO:* ${fmtARS(anticipo)}`,
+      `*A FINANCIAR:* ${fmtARS(aFinanciar)}`,
       ''
     ].join('\n')
 
@@ -292,7 +316,7 @@ const PlanCard = forwardRef(function PlanCard(
               type="button"
               onClick={copyPlansOnly}
               className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium ring-1 ring-emerald-200 text-emerald-900 bg-white hover:bg-emerald-50 active:bg-emerald-100"
-              title="Copiar este plan (incluye Producto y Tarjeta)"
+              title="Copiar este plan (incluye Producto, Tarjeta, Adelanto y A financiar)"
               disabled={!ready}
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -319,19 +343,7 @@ const PlanCard = forwardRef(function PlanCard(
 
             <button
               type="button"
-              onClick={useReactToPrint({
-                contentRef: componentRef,
-                removeAfterPrint: false,
-                documentTitle: title || 'Plan',
-                pageStyle: `
-                  @page { margin: 10mm; }
-                  @media print {
-                    body * { visibility: hidden; }
-                    .print-solo, .print-solo * { visibility: visible; }
-                    .print-solo { position: static !important; left: auto !important; top: auto !important; }
-                  }
-                `
-              })}
+              onClick={handlePrint}
               className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 active:bg-emerald-800"
               title="Imprimir / Exportar PDF"
               disabled={!ready}
@@ -341,6 +353,19 @@ const PlanCard = forwardRef(function PlanCard(
                 <path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-3"/><path d="M3 21l7-7"/>
               </svg>
               Imprimir / PDF
+            </button>
+
+            <button
+              type="button"
+              onClick={clearPlan}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium ring-1 ring-rose-200 text-rose-800 bg-white hover:bg-rose-50 active:bg-rose-100"
+              title="Limpiar campos de este plan"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 6h18"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/>
+              </svg>
+              Limpiar plan
             </button>
           </div>
         )}
@@ -426,7 +451,7 @@ const PlanCard = forwardRef(function PlanCard(
                   <div className="rounded-lg bg-emerald-50 ring-1 ring-emerald-100 p-3">
                     <div className="text-[11px] uppercase tracking-wide text-emerald-700 font-semibold">Monto</div>
                     <div className={`mt-1 font-extrabold text-emerald-900 leading-tight ${kpiNumber}`}>
-                      {fmtARS(sanitizeNumber(precio))}
+                      {fmtARS(monto)}
                     </div>
                     <div className="text-xs text-emerald-700">Precio / Monto base</div>
                   </div>
@@ -434,7 +459,7 @@ const PlanCard = forwardRef(function PlanCard(
                   <div className="rounded-lg bg-white ring-1 ring-emerald-100 p-3">
                     <div className="text-[11px] uppercase tracking-wide text-emerald-700 font-semibold">Adelanto</div>
                     <div className={`mt-1 font-extrabold text-emerald-900 leading-tight ${kpiNumber}`}>
-                      {fmtARS(sanitizeNumber(adelanto))}
+                      {fmtARS(anticipo)}
                     </div>
                     <div className="text-xs text-emerald-700">Se descuenta del monto</div>
                   </div>
@@ -481,17 +506,9 @@ const PlanCard = forwardRef(function PlanCard(
                           </td>
                         </tr>
                         <tr>
-                          <td className="py-3 pl-3 sm:pl-4 pr-4 font-semibold text-emerald-900">Resumen del plan</td>
-                          <td className="py-3 pr-3 sm:pr-4 text-emerald-900">
-                            {tasasResumen
-                              ? `min ${tasasResumen.min}% · max ${tasasResumen.max}% · prom ${Number(tasasResumen.avg).toFixed(2)}%`
-                              : '—'}
-                          </td>
-                        </tr>
-                        <tr>
                           <td className="py-3 pl-3 sm:pl-4 pr-4 font-semibold text-emerald-900">A financiar</td>
                           <td className="py-3 pr-3 sm:pr-4 text-emerald-900">
-                            {fmtARS(Math.max(0, sanitizeNumber(precio) - sanitizeNumber(adelanto)))}
+                            {fmtARS(aFinanciar)}
                           </td>
                         </tr>
                         <tr>

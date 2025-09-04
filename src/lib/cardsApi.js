@@ -25,6 +25,34 @@ function isAbsoluteHttpUrl(u) {
 }
 
 /* ─────────────────────────────
+   Helpers locales
+   ───────────────────────────── */
+function safeParse(json) {
+  try {
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+function safeSetLocal(payload) {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify(payload));
+  } catch {
+    /* quota / private mode */
+  }
+}
+
+function dispatchCardsUpdated(version) {
+  try {
+    const detail = { version: Number(version || 1), at: Date.now() };
+    window.dispatchEvent(new CustomEvent('cards:updated', { detail }));
+  } catch {
+    /* non-browser env */
+  }
+}
+
+/* ─────────────────────────────
    LECTURA
    ───────────────────────────── */
 
@@ -32,8 +60,9 @@ export async function fetchCards() {
   // Si no hay API configurada, usa cache local
   if (!API_BASE || !isAbsoluteHttpUrl(API_BASE)) {
     const raw = localStorage.getItem(LS_KEY);
-    if (!raw) return { version: 1, cards: [] };
-    return JSON.parse(raw);
+    const parsed = raw ? safeParse(raw) : null;
+    if (!parsed) return { version: 1, cards: [] };
+    return parsed;
   }
 
   try {
@@ -51,12 +80,13 @@ export async function fetchCards() {
     }
 
     const data = await res.json();
-    localStorage.setItem(LS_KEY, JSON.stringify(data));
+    safeSetLocal(data);
     return data;
   } catch (_err) {
     // si falla la red/servidor, intenta fallback local
     const raw = localStorage.getItem(LS_KEY);
-    if (raw) return JSON.parse(raw);
+    const parsed = raw ? safeParse(raw) : null;
+    if (parsed) return parsed;
     // último recurso: estructura vacía
     return { version: 1, cards: [] };
   }
@@ -101,42 +131,50 @@ async function sendUpsertOrPut(payload) {
   return res;
 }
 
-// Guardado remoto con errores diferenciados (401 vs otros). Usa UPSERT por defecto.
+// Guardado remoto con manejo de errores + fallback local.
+// Usa UPSERT por defecto.
 export async function saveCards(payload) {
+  // Sin API => solo local
   if (!API_BASE || !isAbsoluteHttpUrl(API_BASE)) {
-    localStorage.setItem(LS_KEY, JSON.stringify(payload));
-    window.dispatchEvent(new CustomEvent('cards:updated'));
+    safeSetLocal(payload);
+    dispatchCardsUpdated(payload?.version);
     return { ok: true, local: true };
   }
 
-  const res = await sendUpsertOrPut(payload);
-
-  if (res.status === 401) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`unauthorized (401)${body ? `: ${body}` : ''}`);
-  }
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`save_failed (${res.status})${body ? `: ${body}` : ''}`);
-  }
-
-  // Éxito: asumimos que payload ya representa el estado local deseado
-  localStorage.setItem(LS_KEY, JSON.stringify(payload));
-  window.dispatchEvent(new CustomEvent('cards:updated'));
-  // Intentamos devolver JSON si el server lo envió; sino, { ok: true }
   try {
-    return await res.json();
-  } catch {
-    return { ok: true };
+    const res = await sendUpsertOrPut(payload);
+
+    if (res.status === 401) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`unauthorized (401)${body ? `: ${body}` : ''}`);
+    }
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`save_failed (${res.status})${body ? `: ${body}` : ''}`);
+    }
+
+    // Éxito: asumimos que payload ya representa el estado local deseado
+    safeSetLocal(payload);
+    dispatchCardsUpdated(payload?.version);
+    try {
+      return await res.json();
+    } catch {
+      return { ok: true };
+    }
+  } catch (err) {
+    // Fallback local ante red caida/timeout/etc.
+    safeSetLocal(payload);
+    dispatchCardsUpdated(payload?.version);
+    return { ok: false, error: String(err?.message || err), local: true };
   }
 }
 
 // Guardado pensado para "unload/ocultar pestaña" con keepalive. Usa UPSERT por defecto.
 export async function saveCardsBackground(payload) {
   if (!API_BASE || !isAbsoluteHttpUrl(API_BASE)) {
-    localStorage.setItem(LS_KEY, JSON.stringify(payload));
-    window.dispatchEvent(new CustomEvent('cards:updated'));
+    safeSetLocal(payload);
+    dispatchCardsUpdated(payload?.version);
     return { ok: true, local: true };
   }
 
@@ -171,18 +209,18 @@ export async function saveCardsBackground(payload) {
 
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      localStorage.setItem(LS_KEY, JSON.stringify(payload));
-      window.dispatchEvent(new CustomEvent('cards:updated'));
+      safeSetLocal(payload);
+      dispatchCardsUpdated(payload?.version);
       return { ok: false, status: res.status, body: body || null, local: true };
     }
 
-    localStorage.setItem(LS_KEY, JSON.stringify(payload));
-    window.dispatchEvent(new CustomEvent('cards:updated'));
+    safeSetLocal(payload);
+    dispatchCardsUpdated(payload?.version);
     return { ok: true };
   } catch {
     // Sin red: cache local silenciosa
-    localStorage.setItem(LS_KEY, JSON.stringify(payload));
-    window.dispatchEvent(new CustomEvent('cards:updated'));
+    safeSetLocal(payload);
+    dispatchCardsUpdated(payload?.version);
     return { ok: false, local: true };
   }
 }
@@ -193,8 +231,8 @@ export async function saveCardsBackground(payload) {
 // Si alguna vez necesitás **intencionalmente** reemplazar TODO desde el front:
 export async function replaceAllCards(payload) {
   if (!API_BASE || !isAbsoluteHttpUrl(API_BASE)) {
-    localStorage.setItem(LS_KEY, JSON.stringify(payload));
-    window.dispatchEvent(new CustomEvent('cards:updated'));
+    safeSetLocal(payload);
+    dispatchCardsUpdated(payload?.version);
     return { ok: true, local: true };
   }
 
@@ -222,8 +260,8 @@ export async function replaceAllCards(payload) {
     throw new Error(`save_failed (${res.status})${body ? `: ${body}` : ''}`);
   }
 
-  localStorage.setItem(LS_KEY, JSON.stringify(payload));
-  window.dispatchEvent(new CustomEvent('cards:updated'));
+  safeSetLocal(payload);
+  dispatchCardsUpdated(payload?.version);
   try {
     return await res.json();
   } catch {
