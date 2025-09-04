@@ -74,13 +74,14 @@ export const getCards = () => {
   return []
 }
 
-/** Carga las cards desde el backend y persiste en cache + localStorage */
+/** Carga las cards desde el backend y persiste en cache + localStorage
+ *  ⚠ No emitimos 'cards:updated' acá para evitar loops.
+ */
 export const loadCardsAsync = async () => {
   const server = await fetchCards()
   const cards = normalizeCards(server?.cards || [])
   cache = { version: Number(server?.version || 1), cards }
   writeLocal(cache)
-  dispatchCardsUpdated()
   return cache.cards
 }
 
@@ -105,7 +106,7 @@ export const upsertCard = async (card) => {
   cache = { version: (Number(cache.version) || 1) + 1, cards }
   await saveCards(cache)
   writeLocal(cache)
-  dispatchCardsUpdated()
+  dispatchCardsUpdated() // ✅ Emitir solo en escritura
   return cache.cards
 }
 
@@ -119,7 +120,7 @@ export const deleteCard = async (id) => {
   cache = { version: (Number(cache.version) || 1) + 1, cards }
   await saveCards(cache)
   writeLocal(cache)
-  dispatchCardsUpdated()
+  dispatchCardsUpdated() // ✅ Emitir solo en escritura
   return cache.cards
 }
 

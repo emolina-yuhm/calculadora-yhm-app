@@ -44,12 +44,25 @@ const PlanCard = forwardRef(function PlanCard(
 
   // Estado de entradas + persistencia
   const [producto, setProducto] = useState('')
-  const [precio, setPrecio] = useState('')
-  const [adelanto, setAdelanto] = useState('')
+  const [precio, setPrecio] = useState('')     // guardamos SOLO dígitos
+  const [adelanto, setAdelanto] = useState('') // guardamos SOLO dígitos
   const [cardId, setCardId] = useState('')
 
   const hydratedRef = useRef(false)
   const persistTimer = useRef(null)
+
+  // Helpers de input: solo dígitos (eliminamos puntos, comas, $, espacios, etc.)
+  const digitsOnly = (s) => String(s || '').replace(/[^\d]/g, '')
+  const onChangeDigits = (setter) => (e) => setter(digitsOnly(e.target.value))
+  const onPasteDigits = (setter) => (e) => {
+    try {
+      e.preventDefault()
+      const text = (e.clipboardData || window.clipboardData).getData('text')
+      setter(digitsOnly(text))
+    } catch {
+      /* fallback: el onChange volverá a limpiar */
+    }
+  }
 
   // Hidratar desde localStorage
   useEffect(() => {
@@ -60,8 +73,8 @@ const PlanCard = forwardRef(function PlanCard(
         const st = JSON.parse(raw)
         if (st && typeof st === 'object') {
           setProducto(st.producto !== undefined ? String(st.producto) : '')
-          setPrecio(st.precio !== undefined ? String(st.precio) : '')
-          setAdelanto(st.adelanto !== undefined ? String(st.adelanto) : '')
+          setPrecio(st.precio !== undefined ? digitsOnly(st.precio) : '')
+          setAdelanto(st.adelanto !== undefined ? digitsOnly(st.adelanto) : '')
           setCardId(st.cardId || '')
           setCompact(!!st.compact)
           setOpen(st.open === undefined ? true : !!st.open)
@@ -100,7 +113,7 @@ const PlanCard = forwardRef(function PlanCard(
       .sort((a, b) => a - b)
   }, [selectedCard])
 
-  // Entradas (cuotas/pct) normalizadas y ordenadas — para UI y métricas
+  // Entradas (cuotas/pct) normalizadas y ordenadas
   const coefEntries = useMemo(() => {
     if (!selectedCard) return []
     return Object.entries(selectedCard.coeficientes || {})
@@ -109,13 +122,11 @@ const PlanCard = forwardRef(function PlanCard(
       .sort((a, b) => a.cuotas - b.cuotas)
   }, [selectedCard])
 
-  // Texto “tasas por cuota” (solo para UI NO compacta)
   const tasasPorCuotaText = useMemo(() => {
     if (!coefEntries.length) return '—'
     return coefEntries.map(({ cuotas, pct }) => `${cuotas}: ${pct}%`).join(' • ')
   }, [coefEntries])
 
-  // Resumen del plan (min, max, promedio de tasas) — UI NO compacta
   const tasasResumen = useMemo(() => {
     if (!coefEntries.length) return null
     const pcts = coefEntries.map(e => e.pct)
@@ -125,7 +136,7 @@ const PlanCard = forwardRef(function PlanCard(
     return { min, max, avg }
   }, [coefEntries])
 
-  // Cálculo de todos los planes segun coeficientes de la tarjeta
+  // Cálculo de planes
   const planes = useMemo(() => {
     if (!selectedCard) return []
     return calcularPlanesPorCoeficientes({
@@ -156,7 +167,7 @@ const PlanCard = forwardRef(function PlanCard(
   const sectionGap = isCompact ? 'gap-3' : 'gap-4'
   const cardPadding = isCompact ? 'p-3' : 'p-4'
 
-  // Nodo a imprimir (react-to-print v3)
+  // Print
   const componentRef = useRef(null)
   const handlePrint = useReactToPrint({
     contentRef: componentRef,
@@ -172,17 +183,16 @@ const PlanCard = forwardRef(function PlanCard(
     `
   })
 
-  // 🔄 Limpiar SOLO este plan
+  // Limpiar SOLO este plan
   const clearPlan = () => {
     setProducto('')
     setPrecio('')
     setAdelanto('')
-    // mantenemos la tarjeta seleccionada para no romper el flujo
     try { localStorage.removeItem(derivedStorageKey) } catch {}
     toast.info('Plan limpiado.')
   }
 
-  // Copiar SOLO el plan actual (sin tasas), con encabezado y título en negrita
+  // Copiar SOLO el plan actual (texto plano)
   const copyPlansOnly = async () => {
     if (!ready) {
       modal.warning('Faltan datos', 'Completá el plan antes de copiar.')
@@ -193,6 +203,7 @@ const PlanCard = forwardRef(function PlanCard(
       `**${title || 'Plan'}**`,
       `Producto: ${producto || '—'}`,
       `Tarjeta: ${selectedCard?.nombre || selectedCard?.id || '—'}`,
+      `Precio: ${fmtARS(monto)}`,
       `Adelanto: ${fmtARS(anticipo)}`,
       `A financiar: ${fmtARS(aFinanciar)}`,
       '',
@@ -228,7 +239,7 @@ const PlanCard = forwardRef(function PlanCard(
     }
   }
 
-  // Copiar PLANTILLA completa en WhatsApp para ESTE plan (sin tasas, con condiciones)
+  // Copiar PLANTILLA WA para ESTE plan
   const copyTemplateWA = async () => {
     if (!ready) {
       modal.warning('Faltan datos', 'Completá el plan antes de copiar.')
@@ -241,6 +252,7 @@ const PlanCard = forwardRef(function PlanCard(
       `*PRODUCTO:* ${String(producto || '—')}`,
       '',
       `*FINANCIAMIENTO:* Tarjeta: ${selectedCard?.nombre || selectedCard?.id || '—'}`,
+      `*PRECIO:* ${fmtARS(monto)}`,
       `*ADELANTO:* ${fmtARS(anticipo)}`,
       `*A FINANCIAR:* ${fmtARS(aFinanciar)}`,
       ''
@@ -316,7 +328,7 @@ const PlanCard = forwardRef(function PlanCard(
               type="button"
               onClick={copyPlansOnly}
               className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium ring-1 ring-emerald-200 text-emerald-900 bg-white hover:bg-emerald-50 active:bg-emerald-100"
-              title="Copiar este plan (incluye Producto, Tarjeta, Adelanto y A financiar)"
+              title="Copiar este plan (incluye Producto, Tarjeta, Precio, Adelanto y A financiar)"
               disabled={!ready}
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -390,24 +402,32 @@ const PlanCard = forwardRef(function PlanCard(
               <span className="text-sm font-semibold text-emerald-900">Precio / Monto base</span>
               <input
                 className={inputBase}
-                type="number"
-                inputMode="decimal"
-                placeholder="Ej: 2.500.000"
+                type="text"
+                inputMode="numeric"
+                placeholder="Ej: 1500000"
                 value={precio}
-                onChange={e => setPrecio(e.target.value)}
+                onChange={onChangeDigits(setPrecio)}
+                onPaste={onPasteDigits(setPrecio)}
               />
+              <div className="mt-1 text-[11px] text-emerald-700">
+                Solo números (sin puntos ni comas). Ej: <span className="font-semibold">1500000</span>
+              </div>
             </label>
 
             <label className="block">
               <span className="text-sm font-semibold text-emerald-900">Adelanto</span>
               <input
                 className={inputBase}
-                type="number"
-                inputMode="decimal"
-                placeholder="Ej: 500.000"
+                type="text"
+                inputMode="numeric"
+                placeholder="Ej: 500000"
                 value={adelanto}
-                onChange={(e) => setAdelanto(e.target.value)}
+                onChange={onChangeDigits(setAdelanto)}
+                onPaste={onPasteDigits(setAdelanto)}
               />
+              <div className="mt-1 text-[11px] text-emerald-700">
+                Solo números (sin puntos ni comas).
+              </div>
             </label>
 
             <label className="block">
@@ -465,7 +485,7 @@ const PlanCard = forwardRef(function PlanCard(
                   </div>
                 </div>
 
-                {/* Listado de planes por cuotas */}
+                {/* Listado de planes */}
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {planes.map((p) => (
                     <div key={p.cuotas} className="rounded-lg ring-1 ring-emerald-100 p-3 bg-white">

@@ -21,9 +21,82 @@ export const fmtARSCompact = (n) =>
     maximumFractionDigits: 0,
   });
 
+/**
+ * Sanitiza números pegados en diferentes formatos:
+ * - Acepta "$ 1.234.567,89", "1,234,567.89", "1234567,89", etc.
+ * - Regla: si hay ',' y '.' → la ÚLTIMA aparición es decimal y la otra es miles
+ * - Si hay un solo separador:
+ *   - Si aparece >1 vez → se asume separador de miles (sin decimales)
+ *   - Si aparece 1 vez:
+ *       · si hay exactamente 2 dígitos a la derecha → decimal
+ *       · si hay 3 dígitos a la derecha y muchos a la izquierda → miles
+ *       · caso contrario → decimal por defecto
+ */
 export const sanitizeNumber = (val) => {
   if (val === null || val === undefined) return 0;
-  const s = String(val).replace(/\./g, '').replace(',', '.');
+  if (typeof val === 'number') return Number.isFinite(val) ? val : 0;
+
+  const raw = String(val).trim();
+  if (!raw) return 0;
+
+  // Dejar solo dígitos, coma, punto y signo - (el resto lo removemos: $, espacios, etc.)
+  let s = raw.replace(/[^\d,.\-]+/g, '');
+
+  if (!s) return 0;
+
+  // Normalizar el signo: solo permitir uno al inicio
+  s = s.replace(/(?!^)-/g, '');
+
+  const commas = (s.match(/,/g) || []).length;
+  const dots = (s.match(/\./g) || []).length;
+
+  const lastComma = s.lastIndexOf(',');
+  const lastDot = s.lastIndexOf('.');
+
+  let decimalSep = null;
+
+  if (commas && dots) {
+    // Hay ambos: la última aparición entre coma/punto define los decimales
+    decimalSep = lastComma > lastDot ? ',' : '.';
+  } else if (commas === 1 && dots === 0) {
+    // Solo una coma
+    const right = s.length - lastComma - 1;
+    if (right === 2) decimalSep = ',';                 // típico decimal
+    else if (right === 3 && s.slice(0, lastComma).replace(/[^0-9]/g, '').length >= 1) {
+      // parece miles => sin decimales
+      decimalSep = null;
+    } else decimalSep = ',';                           // por defecto decimal
+  } else if (dots === 1 && commas === 0) {
+    // Solo un punto
+    const right = s.length - lastDot - 1;
+    if (right === 2) decimalSep = '.';                 // típico decimal
+    else if (right === 3 && s.slice(0, lastDot).replace(/[^0-9]/g, '').length >= 1) {
+      // parece miles => sin decimales
+      decimalSep = null;
+    } else decimalSep = '.';                           // por defecto decimal
+  } else if (commas > 1 && dots === 0) {
+    // Varias comas → miles
+    decimalSep = null;
+  } else if (dots > 1 && commas === 0) {
+    // Varios puntos → miles
+    decimalSep = null;
+  } else if (commas === 1 && dots === 1) {
+    // Ambos una vez: ya lo cubrimos con la regla de "último es decimal"
+    decimalSep = lastComma > lastDot ? ',' : '.';
+  } else {
+    // Sin separadores → número entero
+    decimalSep = null;
+  }
+
+  if (decimalSep) {
+    const other = decimalSep === ',' ? '.' : ',';
+    s = s.replace(new RegExp('\\' + other, 'g'), '');  // remover miles
+    if (decimalSep === ',') s = s.replace(/,/g, '.');  // decimal a punto
+  } else {
+    // No hay decimales: remover cualquier separador
+    s = s.replace(/[.,]/g, '');
+  }
+
   const n = Number(s);
   return Number.isFinite(n) ? n : 0;
 };
@@ -53,11 +126,7 @@ export const calcularPlan = ({ precio, adelanto, coefPct, cuotas }) => {
 
 /**
  * Genera todos los planes a partir de los coeficientes configurados de una tarjeta.
- * - coeficientes: objeto donde la clave es la cantidad de cuotas (string o number) y el valor es el % total (ej: { "3": 14, "6": 25 })
- * - precio, adelanto: montos ingresados por el usuario
- *
- * Retorna un array ordenado por cuotas asc:
- * [{ cuotas, coefPct, aFinanciar, interesTotal, costoFinal, valorCuota }]
+ * - coeficientes: { "3": 14, "6": 25, ... }
  */
 export const calcularPlanesPorCoeficientes = ({ precio, adelanto = 0, coeficientes = {} }) => {
   const entries = Object.entries(coeficientes)
@@ -72,20 +141,7 @@ export const calcularPlanesPorCoeficientes = ({ precio, adelanto = 0, coeficient
 };
 
 /**
- * Construye el bloque de texto EXACTO para “Copiar plan en plantilla” (texto plano).
- * Ahora incluye, si se provee:
- *  - Adelanto
- *  - A financiar (si se pasa `aFinanciar` o si se pasa `precio` para calcularlo).
- *
- * params:
- * - producto: string
- * - tarjetaNombre: string
- * - planes: array de { cuotas, valorCuota, costoFinal }
- * - adelanto?: number | string
- * - aFinanciar?: number | string
- * - precio?: number | string (solo si querés que se calcule aFinanciar = precio - adelanto)
- *
- * Retorna string listo para copiar.
+ * Plantilla TEXTO: ahora incluye Precio, Adelanto y A financiar (si están disponibles).
  */
 export const plantillaPresupuesto = ({
   producto = '',
@@ -101,17 +157,17 @@ export const plantillaPresupuesto = ({
     .map((p) =>
       [
         `Cuotas: ${p.cuotas}`,
-        `Valor de cuota: ${fmtARS(p.valorCuota)}`, // 2 decimales en plantilla
+        `Valor de cuota: ${fmtARS(p.valorCuota)}`,
         `Margen necesario: ${fmtARS(p.costoFinal)}`,
       ].join('\n')
     )
     .join('\n\n');
 
   const anticipo = sanitizeNumber(adelanto);
+  const precioNum = precio !== null && precio !== undefined ? sanitizeNumber(precio) : null;
+
   let aFin = aFinanciar !== null && aFinanciar !== undefined ? sanitizeNumber(aFinanciar) : null;
-  if (aFin === null && precio !== null && precio !== undefined) {
-    aFin = Math.max(0, sanitizeNumber(precio) - anticipo);
-  }
+  if (aFin === null && precioNum !== null) aFin = Math.max(0, precioNum - anticipo);
 
   const lineas = [
     'PRESUPUESTO',
@@ -119,7 +175,9 @@ export const plantillaPresupuesto = ({
     `Producto: ${producto}`,
     '',
     `Financiamiento - Tarjeta: ${tarjetaNombre}`,
-    ...(anticipo > 0 ? ['', `Adelanto: ${fmtARS(anticipo)}`] : []),
+    '',
+    ...(precioNum !== null ? [`Precio: ${fmtARS(precioNum)}`] : []),
+    ...(anticipo > 0 ? [`Adelanto: ${fmtARS(anticipo)}`] : []),
     ...(aFin !== null ? [`A financiar: ${fmtARS(aFin)}`, ''] : ['']),
     bloquesPlanes,
     '',
@@ -135,13 +193,11 @@ export const plantillaPresupuesto = ({
     '¿Le interesa este presupuesto?',
   ];
 
-  // Evita dobles saltos consecutivos iniciales por seguridad
   return lineas.filter((l, i) => !(l === '' && lineas[i - 1] === '')).join('\n');
 };
 
 /**
- * Versión WhatsApp-friendly con *negritas*.
- * También incluye Adelanto y A financiar cuando corresponde.
+ * Plantilla WHATSAPP: incluye *PRECIO*, *ADELANTO* y *A FINANCIAR* si aplican.
  */
 export const plantillaPresupuestoWA = ({
   producto = '',
@@ -164,10 +220,10 @@ export const plantillaPresupuestoWA = ({
     .join('\n\n');
 
   const anticipo = sanitizeNumber(adelanto);
+  const precioNum = precio !== null && precio !== undefined ? sanitizeNumber(precio) : null;
+
   let aFin = aFinanciar !== null && aFinanciar !== undefined ? sanitizeNumber(aFinanciar) : null;
-  if (aFin === null && precio !== null && precio !== undefined) {
-    aFin = Math.max(0, sanitizeNumber(precio) - anticipo);
-  }
+  if (aFin === null && precioNum !== null) aFin = Math.max(0, precioNum - anticipo);
 
   const lineas = [
     '*PRESUPUESTO:*',
@@ -175,6 +231,8 @@ export const plantillaPresupuestoWA = ({
     `*PRODUCTO:* ${producto}`,
     '',
     `*FINANCIAMIENTO:* Tarjeta: ${tarjetaNombre}`,
+    '',
+    ...(precioNum !== null ? [`*PRECIO:* ${fmtARS(precioNum)}`] : []),
     ...(anticipo > 0 ? [`*ADELANTO:* ${fmtARS(anticipo)}`] : []),
     ...(aFin !== null ? [`*A FINANCIAR:* ${fmtARS(aFin)}`, ''] : ['']),
     bloquesPlanes,
