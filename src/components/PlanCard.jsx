@@ -22,6 +22,7 @@ const PlanCard = forwardRef(function PlanCard(
     return `${storageKey}:${t}`
   }, [storageKey, title])
 
+  // Tarjetas (carga y refrescos)
   const [cards, setCards] = useState(() => getCards() || [])
   useEffect(() => {
     (async () => setCards((await loadCardsAsync()) || []))()
@@ -40,6 +41,7 @@ const PlanCard = forwardRef(function PlanCard(
     }
   }, [])
 
+  // Estado base
   const [producto, setProducto] = useState('')
   const [precio, setPrecio] = useState('')     // solo dígitos
   const [adelanto, setAdelanto] = useState('') // solo dígitos
@@ -48,7 +50,7 @@ const PlanCard = forwardRef(function PlanCard(
   const hydratedRef = useRef(false)
   const persistTimer = useRef(null)
 
-  // limpiar a dígitos
+  // Inputs: forzar solo dígitos (quita puntos y comas)
   const digitsOnly = (s) => String(s || '').replace(/[^\d]/g, '')
   const onChangeDigits = (setter) => (e) => setter(digitsOnly(e.target.value))
   const onPasteDigits = (setter) => (e) => {
@@ -59,6 +61,7 @@ const PlanCard = forwardRef(function PlanCard(
     } catch {}
   }
 
+  // Hidratar desde localStorage
   useEffect(() => {
     if (hydratedRef.current) return
     try {
@@ -78,6 +81,7 @@ const PlanCard = forwardRef(function PlanCard(
     hydratedRef.current = true
   }, [derivedStorageKey])
 
+  // Persistir en localStorage (debounced)
   useEffect(() => {
     if (!hydratedRef.current) return
     clearTimeout(persistTimer.current)
@@ -90,6 +94,7 @@ const PlanCard = forwardRef(function PlanCard(
     return () => clearTimeout(persistTimer.current)
   }, [producto, precio, adelanto, cardId, compact, open, derivedStorageKey])
 
+  // Defaults de tarjeta
   useEffect(() => {
     if (cards.length === 0) { if (cardId) setCardId(''); return }
     if (!cardId || !cards.some(c => c.id === cardId)) setCardId(cards[0].id)
@@ -127,6 +132,7 @@ const PlanCard = forwardRef(function PlanCard(
     return { min, max, avg }
   }, [coefEntries])
 
+  // Cálculo de planes
   const planes = useMemo(() => {
     if (!selectedCard) return []
     return calcularPlanesPorCoeficientes({
@@ -146,6 +152,7 @@ const PlanCard = forwardRef(function PlanCard(
     !!selectedCard &&
     availableCuotas.length > 0
 
+  // UI helpers
   const inputBase =
     'mt-1 w-full rounded-md border border-emerald-200 bg-white px-3 py-2 text-sm ' +
     'focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500'
@@ -156,6 +163,7 @@ const PlanCard = forwardRef(function PlanCard(
   const sectionGap = isCompact ? 'gap-3' : 'gap-4'
   const cardPadding = isCompact ? 'p-3' : 'p-4'
 
+  // Print
   const componentRef = useRef(null)
   const handlePrint = useReactToPrint({
     contentRef: componentRef,
@@ -171,6 +179,7 @@ const PlanCard = forwardRef(function PlanCard(
     `
   })
 
+  // Limpiar plan
   const clearPlan = () => {
     setProducto('')
     setPrecio('')
@@ -179,7 +188,7 @@ const PlanCard = forwardRef(function PlanCard(
     toast.info('Plan limpiado.')
   }
 
-  // TEXTO — sin precio visible; con línea extra tras "A financiar"
+  // Copiar SOLO texto (sin decimales en montos)
   const copyPlansOnly = async () => {
     if (!ready) {
       modal.warning('Faltan datos', 'Completá el plan antes de copiar.')
@@ -193,11 +202,11 @@ const PlanCard = forwardRef(function PlanCard(
       '',
       `Financiamiento: Tarjeta: ${selectedCard?.nombre || selectedCard?.id || '—'}`,
       '',
-      `Anticipo: ${fmtARS(anticipo)}`,
+      `Anticipo: ${fmtARSCompact(anticipo)}`,
       '',
-      `A financiar: ${fmtARS(aFinanciar)}`,
+      `A financiar: ${fmtARSCompact(aFinanciar)}`,
       '',
-      '', // ← línea extra antes de las cuotas
+      '', // línea extra antes de cuotas
     ].join('\n')
 
     const bloques = [...planes]
@@ -205,8 +214,8 @@ const PlanCard = forwardRef(function PlanCard(
       .map((p) =>
         [
           `Cuotas: ${p.cuotas}`,
-          `  Valor de cuota: ${fmtARS(p.valorCuota)}`,
-          `  Margen necesario: ${fmtARS(p.costoFinal)}`
+          `  Valor de cuota: ${fmtARSCompact(p.valorCuota)}`,
+          `  Margen necesario: ${fmtARSCompact(p.costoFinal)}`
         ].join('\n')
       )
       .join('\n\n')
@@ -229,7 +238,7 @@ const PlanCard = forwardRef(function PlanCard(
     }
   }
 
-  // WHATSAPP — sin precio visible; con línea extra tras "*A FINANCIAR*"
+  // Copiar PLANTILLA WhatsApp (sin decimales en montos)
   const copyTemplateWA = async () => {
     if (!ready) {
       modal.warning('Faltan datos', 'Completá el plan antes de copiar.')
@@ -243,19 +252,19 @@ const PlanCard = forwardRef(function PlanCard(
       '',
       `*FINANCIAMIENTO:* Tarjeta: ${selectedCard?.nombre || selectedCard?.id || '—'}`,
       '',
-      `*ANTICIPO:* ${fmtARS(anticipo)}`,
+      `*ANTICIPO:* ${fmtARSCompact(anticipo)}`,
       '',
-      `*A FINANCIAR:* ${fmtARS(aFinanciar)}`,
+      `*A FINANCIAR:* ${fmtARSCompact(aFinanciar)}`,
       '',
-      '', // ← línea extra antes de las cuotas
+      '', // línea extra antes de cuotas
     ].join('\n')
 
     const cuerpo = [...planes]
       .sort((a, b) => (a.cuotas || 0) - (b.cuotas || 0))
       .map(p => [
         `*Cuotas:* ${p.cuotas}`,
-        `  Valor de cuota: ${fmtARS(p.valorCuota)}`,
-        `  Margen necesario: ${fmtARS(p.costoFinal)}`
+        `  Valor de cuota: ${fmtARSCompact(p.valorCuota)}`,
+        `  Margen necesario: ${fmtARSCompact(p.costoFinal)}`
       ].join('\n'))
       .join('\n\n')
 
@@ -450,7 +459,7 @@ const PlanCard = forwardRef(function PlanCard(
 
             {ready && (
               <>
-                {/* KPIs base */}
+                {/* KPIs base (UI sigue con 2 decimales donde corresponde) */}
                 <div className={`grid ${isCompact ? 'gap-2' : 'gap-3'} sm:grid-cols-3`}>
                   <div className="rounded-lg bg-white ring-1 ring-emerald-100 p-3">
                     <div className="text-[11px] uppercase tracking-wide text-emerald-700 font-semibold">Producto</div>
@@ -477,7 +486,7 @@ const PlanCard = forwardRef(function PlanCard(
                   </div>
                 </div>
 
-                {/* Listado de planes */}
+                {/* Listado de planes (UI compact sin decimales ya existía) */}
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {planes.map((p) => (
                     <div key={p.cuotas} className="rounded-lg ring-1 ring-emerald-100 p-3 bg-white">

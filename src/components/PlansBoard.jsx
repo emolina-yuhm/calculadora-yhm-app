@@ -2,11 +2,13 @@
 import React, { useMemo, useRef, useState } from 'react'
 import { useReactToPrint } from 'react-to-print'
 import PlanCard from './PlanCard'
-import { calcularPlanesPorCoeficientes, sanitizeNumber, fmtARS as fmtARSUtil } from '../utils/finance'
+import { calcularPlanesPorCoeficientes, sanitizeNumber, fmtARSCompact, fmtARS as fmtARSUtil } from '../utils/finance'
 import { getCards } from '../lib/cardsStorage'
 import { modal, toast } from '../lib/alerts'
 
-const fmtARS = (n) => fmtARSUtil(n)
+// Para copys queremos SIN decimales:
+const fmtOut = (n) => fmtARSCompact(n)
+
 const normTitle = (t) => String(t || 'Plan').trim().toLowerCase().replace(/\s+/g, '-')
 
 const TITLES = { A: 'Plan A', B: 'Plan B', C: 'Plan C' }
@@ -80,7 +82,7 @@ export default function PlansBoard() {
   const btnDanger =
     'inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium ring-1 ring-rose-200 bg-white text-rose-800 hover:bg-rose-50 active:bg-rose-100'
 
-  /* Copiar seleccionados (TEXTO) — sin precio visible; con línea extra tras "A financiar" */
+  /* Copiar seleccionados (TEXTO) — SIN decimales; con línea extra tras "A financiar" */
   const copySelected = async () => {
     const blocks = []
 
@@ -96,11 +98,11 @@ export default function PlansBoard() {
         '',
         `Financiamiento: Tarjeta: ${card?.nombre || card?.id || '—'}`,
         '',
-        `Anticipo: ${fmtARS(adelanto)}`,
+        `Anticipo: ${fmtOut(adelanto)}`,
         '',
-        `A financiar: ${fmtARS(aFinanciar)}`,
+        `A financiar: ${fmtOut(aFinanciar)}`,
         '',
-        '', // ← línea extra antes de las cuotas
+        '', // línea extra antes de las cuotas
       ].join('\n')
 
       const cuerpo = planes
@@ -108,8 +110,8 @@ export default function PlansBoard() {
         .sort((a, b) => (a.cuotas || 0) - (b.cuotas || 0))
         .map(p => [
           `Cuotas: ${p.cuotas}`,
-          `  Valor de cuota: ${fmtARS(p.valorCuota)}`,
-          `  Margen necesario: ${fmtARS(p.costoFinal)}`
+          `  Valor de cuota: ${fmtOut(p.valorCuota)}`,
+          `  Margen necesario: ${fmtOut(p.costoFinal)}`
         ].join('\n'))
         .join('\n\n')
 
@@ -139,7 +141,7 @@ export default function PlansBoard() {
     }
   }
 
-  /* Copiar seleccionados (WHATSAPP) — sin precio visible; con línea extra tras "*A FINANCIAR*" */
+  /* Copiar seleccionados (WHATSAPP) — SIN decimales; con línea extra tras "*A FINANCIAR*" */
   const copySelectedWA = async () => {
     const blocks = []
 
@@ -155,11 +157,11 @@ export default function PlansBoard() {
         '',
         `*FINANCIAMIENTO:* Tarjeta: ${card?.nombre || card?.id || '—'}`,
         '',
-        `*ANTICIPO:* ${fmtARS(adelanto)}`,
+        `*ANTICIPO:* ${fmtOut(adelanto)}`,
         '',
-        `*A FINANCIAR:* ${fmtARS(aFinanciar)}`,
+        `*A FINANCIAR:* ${fmtOut(aFinanciar)}`,
         '',
-        '', // ← línea extra antes de las cuotas
+        '', // línea extra antes de las cuotas
       ].join('\n')
 
       const cuerpo = planes
@@ -167,8 +169,8 @@ export default function PlansBoard() {
         .sort((a, b) => (a.cuotas || 0) - (b.cuotas || 0))
         .map(p => [
           `*Cuotas:* ${p.cuotas}`,
-          `  Valor de cuota: ${fmtARS(p.valorCuota)}`,
-          `  Margen necesario: ${fmtARS(p.costoFinal)}`
+          `  Valor de cuota: ${fmtOut(p.valorCuota)}`,
+          `  Margen necesario: ${fmtOut(p.costoFinal)}`
         ].join('\n'))
         .join('\n\n')
 

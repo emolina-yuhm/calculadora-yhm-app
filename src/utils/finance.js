@@ -9,7 +9,7 @@ export const fmtARS = (n) =>
   });
 
 /**
- * Formato compacto para UI (sin decimales)
+ * Formato compacto para UI o plantillas (sin decimales), ej: "$ 2.518.466"
  */
 export const fmtARSCompact = (n) =>
   Number(n || 0).toLocaleString('es-AR', {
@@ -19,7 +19,7 @@ export const fmtARSCompact = (n) =>
     maximumFractionDigits: 0,
   });
 
-/** Parser robusto */
+/** Parser robusto para números con puntos/commas variados */
 export const sanitizeNumber = (val) => {
   if (val === null || val === undefined) return 0;
   if (typeof val === 'number') return Number.isFinite(val) ? val : 0;
@@ -72,7 +72,7 @@ export const sanitizeNumber = (val) => {
   return Number.isFinite(n) ? n : 0;
 };
 
-/** Cálculos */
+/** Cálculos base */
 export const calcularPlan = ({ precio, adelanto, coefPct, cuotas }) => {
   const monto = Math.max(0, sanitizeNumber(precio));
   const down = Math.min(monto, Math.max(0, sanitizeNumber(adelanto)));
@@ -98,22 +98,22 @@ export const calcularPlanesPorCoeficientes = ({ precio, adelanto = 0, coeficient
   });
 };
 
-/** plantilla TEXTO — sin precio visible, con espaciado e indentación */
+/** plantilla TEXTO — sin precio visible, sin decimales en montos, con espaciado/indentación */
 export const plantillaPresupuesto = ({
   producto = '',
   tarjetaNombre = '',
   planes = [],
   adelanto = 0,
   aFinanciar = null,
-  precio = null, // solo para cálculo interno de a financiar (no se muestra)
+  precio = null,
 }) => {
   const ordenados = [...planes].sort((a, b) => (a.cuotas || 0) - (b.cuotas || 0));
   const bloquesPlanes = ordenados
     .map((p) =>
       [
         `Cuotas: ${p.cuotas}`,
-        `  Valor de cuota: ${fmtARS(p.valorCuota)}`,
-        `  Margen necesario: ${fmtARS(p.costoFinal)}`,
+        `  Valor de cuota: ${fmtARSCompact(p.valorCuota)}`,
+        `  Margen necesario: ${fmtARSCompact(p.costoFinal)}`,
       ].join('\n')
     )
     .join('\n\n');
@@ -131,11 +131,11 @@ export const plantillaPresupuesto = ({
     '',
     `FINANCIAMIENTO: Tarjeta: ${tarjetaNombre}`,
     '',
-    `ANTICIPO: ${fmtARS(anticipo)}`,
+    `ANTICIPO: ${fmtARSCompact(anticipo)}`,
     '',
-    `A FINANCIAR: ${fmtARS(aFin ?? 0)}`,
+    `A FINANCIAR: ${fmtARSCompact(aFin ?? 0)}`,
     '',
-    '', // ← línea extra para dejar más aire antes de Cuotas
+    '', // aire extra antes de cuotas
     bloquesPlanes,
     '',
     'CONDICIONES GENERALES',
@@ -153,22 +153,22 @@ export const plantillaPresupuesto = ({
   return lineas.filter((l, i) => !(l === '' && lineas[i - 1] === '')).join('\n');
 };
 
-/** plantilla WHATSAPP — sin precio visible, con línea extra tras A FINANCIAR */
+/** plantilla WHATSAPP — sin precio visible, sin decimales en montos */
 export const plantillaPresupuestoWA = ({
   producto = '',
   tarjetaNombre = '',
   planes = [],
   adelanto = 0,
   aFinanciar = null,
-  precio = null, // solo para cálculo interno de a financiar (no se muestra)
+  precio = null,
 }) => {
   const ordenados = [...planes].sort((a, b) => (a.cuotas || 0) - (b.cuotas || 0));
   const bloquesPlanes = ordenados
     .map((p) =>
       [
         `*Cuotas:* ${p.cuotas}`,
-        `  Valor de cuota: ${fmtARS(p.valorCuota)}`,
-        `  Margen necesario: ${fmtARS(p.costoFinal)}`,
+        `  Valor de cuota: ${fmtARSCompact(p.valorCuota)}`,
+        `  Margen necesario: ${fmtARSCompact(p.costoFinal)}`,
       ].join('\n')
     )
     .join('\n\n');
@@ -186,11 +186,11 @@ export const plantillaPresupuestoWA = ({
     '',
     `*FINANCIAMIENTO:* Tarjeta: ${tarjetaNombre}`,
     '',
-    `*ANTICIPO:* ${fmtARS(anticipo)}`,
+    `*ANTICIPO:* ${fmtARSCompact(anticipo)}`,
     '',
-    `*A FINANCIAR:* ${fmtARS(aFin ?? 0)}`,
+    `*A FINANCIAR:* ${fmtARSCompact(aFin ?? 0)}`,
     '',
-    '', // ← línea extra para dejar más aire antes de Cuotas
+    '', // aire extra antes de cuotas
     bloquesPlanes,
     '',
     '*CONDICIONES GENERALES*',
