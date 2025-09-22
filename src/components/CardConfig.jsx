@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Swal from 'sweetalert2'
-import { getCards, upsertCard, deleteCard, loadCardsAsync } from '../lib/cardsStorage'
-import { saveCardsBackground } from '../lib/cardsApi'
+import { getCards, upsertCard, deleteCard, loadCardsAsync, editCard } from '../lib/cardsStorage'
+import { saveCardsBackground, replaceAllCards } from '../lib/cardsApi'
 
 export default function CardConfig() {
   const [cards, setCards] = useState(getCards() || [])
@@ -44,7 +44,7 @@ export default function CardConfig() {
       setCards(fresh)
       if (fresh.length && !selected) setSelected(fresh[0].id)
     })()
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Escuchar actualizaciones locales/externas
   useEffect(() => {
@@ -111,8 +111,8 @@ export default function CardConfig() {
   /**
    * Guarda el form:
    * - Normaliza ID
-   * - Maneja renombrado
-   * - Sube a API a través de upsertCard()
+   * - Maneja renombrado (usa editCard para evitar duplicados)
+   * - Sube a API (editCard ⇒ replaceAll, upsertCard ⇒ upsert)
    * - showModal: usa SweetAlert modal
    * - showBanner: usa banner Guardando/Guardado (sin SweetAlert toast)
    */
@@ -128,18 +128,41 @@ export default function CardConfig() {
     const normalizedId = String(form.id).trim().toLowerCase().replace(/\s+/g, '-')
     const normalized = { ...form, id: normalizedId }
 
-    // Reemplazar en la lista
-    let next = [...cards]
-    if (oldId && oldId !== normalizedId) {
-      next = next.filter(c => c.id !== oldId)
-    }
-    const idx = next.findIndex(c => c.id === normalizedId)
-    if (idx >= 0) next[idx] = normalized
-    else next.push(normalized)
-
     if (showBanner) startSavingBanner()
-    await upsertCard(normalized)
-    setCards(next)
+
+    try {
+      if (oldId && oldId !== normalizedId) {
+        // RENOMBRE de id → evita duplicados en backend
+        await editCard(oldId, { id: normalizedId, nombre: normalized.nombre, coeficientes: normalized.coeficientes })
+      } else {
+        // Alta/edición sin cambio de id → upsert
+        await upsertCard(normalized)
+      }
+    } catch (e) {
+      const msg = String(e?.message || e)
+      if (msg.includes('id_conflict')) {
+        if (showBanner) setSaving(false)
+        await Swal.fire({
+          icon: 'error',
+          title: 'ID en uso',
+          text: `Ya existe otra tarjeta con id "${normalizedId}". Elegí otro id.`,
+          confirmButtonColor: '#10B981'
+        })
+        return false
+      }
+      if (showBanner) setSaving(false)
+      await Swal.fire({
+        icon: 'error',
+        title: 'No se pudo guardar',
+        text: msg,
+        confirmButtonColor: '#10B981'
+      })
+      return false
+    }
+
+    // Refrescar lista desde storage/API para quedar en sync 100%
+    const fresh = await loadCardsAsync()
+    setCards(fresh)
     setSelected(normalizedId)
     prevIdRef.current = normalizedId
 
@@ -196,11 +219,11 @@ export default function CardConfig() {
       saveForm({ showModal: false, showBanner: true })
     }
     window.addEventListener('beforeunload', onBeforeUnload)
-    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeunload)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoSave, form.id, form.nombre, form.coeficientes])
 
-  // visibilitychange + pagehide => PUT keepalive y banner
+  // visibilitychange + pagehide => persistencia; si hay rename, usar replaceAll
   useEffect(() => {
     const buildPayload = () => {
       const oldId = prevIdRef.current
@@ -216,7 +239,7 @@ export default function CardConfig() {
 
       let prevVersion = 1
       try { prevVersion = JSON.parse(localStorage.getItem('fin_cards_motos_v1'))?.version || 1 } catch {}
-      return { version: prevVersion + 1, cards: next }
+      return { version: prevVersion + 1, cards: next, __renamed__: oldId && oldId !== normalizedId }
     }
 
     const persistBackground = () => {
@@ -224,8 +247,10 @@ export default function CardConfig() {
       const payload = buildPayload()
       if (!payload) return
       startSavingBanner()
-      // no await; keepalive permite continuar al cerrar
-      saveCardsBackground(payload).finally(showSavedBannerSoon)
+      const { __renamed__, ...toSave } = payload
+      // Si hubo rename → PUT (replace all) para que borre el id viejo en backend
+      const p = __renamed__ ? replaceAllCards(toSave) : saveCardsBackground(toSave)
+      p.finally(showSavedBannerSoon)
     }
 
     const onVis = () => { if (document.visibilityState === 'hidden') persistBackground() }

@@ -1,5 +1,5 @@
 // src/lib/cardsStorage.js
-import { fetchCards, saveCards } from './cardsApi'
+import { fetchCards, saveCards, replaceAllCards } from './cardsApi'
 
 const STORAGE_KEY = 'fin_cards_motos_v1'
 let cache = null
@@ -85,7 +85,7 @@ export const loadCardsAsync = async () => {
   return cache.cards
 }
 
-/** Crea/actualiza una card por id y persiste en backend + localStorage */
+/** Crea/actualiza una card por id (upsert) y persiste en backend + localStorage */
 export const upsertCard = async (card) => {
   if (!cache) {
     const server = await fetchCards()
@@ -104,10 +104,67 @@ export const upsertCard = async (card) => {
   else cards.push(next)
 
   cache = { version: (Number(cache.version) || 1) + 1, cards }
-  await saveCards(cache)
+  await saveCards(cache)       // upsert (NO elimina ids viejos)
   writeLocal(cache)
-  dispatchCardsUpdated() // ✅ Emitir solo en escritura
+  dispatchCardsUpdated()       // ✅ Emitir solo en escritura
   return cache.cards
+}
+
+/**
+ * EDITA una card existente y permite CAMBIAR el id (rename) sin duplicar.
+ * - originalId: id actual de la tarjeta a editar
+ * - updates: campos a actualizar (podés incluir { id: 'nuevoId' } y/o { nombre, coeficientes, ... })
+ *
+ * Reglas:
+ *  - Si cambia el id y ya existe otra card con ese nuevo id → lanza Error('id_conflict')
+ *  - Persiste con replaceAllCards (PUT) para que se elimine el id viejo en backend
+ */
+export const editCard = async (originalId, updates = {}) => {
+  if (!originalId) throw new Error('original_id_required')
+
+  if (!cache) {
+    const server = await fetchCards()
+    cache = { version: Number(server?.version || 1), cards: normalizeCards(server?.cards || []) }
+  }
+
+  const cards = [...(cache.cards || [])]
+  const idx = cards.findIndex((c) => String(c.id) === String(originalId))
+  if (idx < 0) throw new Error('not_found')
+
+  const current = cards[idx]
+  const nextId = Object.prototype.hasOwnProperty.call(updates, 'id')
+    ? String(updates.id)
+    : current.id
+
+  const isRename = nextId !== current.id
+  if (isRename && cards.some((c, i) => i !== idx && String(c.id) === nextId)) {
+    throw new Error('id_conflict')
+  }
+
+  const next = {
+    ...current,
+    ...updates,
+    id: nextId,
+    coeficientes: Object.prototype.hasOwnProperty.call(updates, 'coeficientes')
+      ? normalizeCoefficients(updates.coeficientes || {})
+      : current.coeficientes,
+  }
+
+  cards[idx] = next
+
+  cache = { version: (Number(cache.version) || 1) + 1, cards }
+
+  // IMPORTANTE: usar replaceAll para que el backend elimine el id viejo si hubo rename
+  await replaceAllCards(cache)
+  writeLocal(cache)
+  dispatchCardsUpdated()
+  return cache.cards
+}
+
+/** Atajo para renombrar únicamente el id (usa editCard internamente) */
+export const renameCardId = async (originalId, newId) => {
+  if (!newId) throw new Error('new_id_required')
+  return editCard(originalId, { id: String(newId) })
 }
 
 /** Elimina una card por id y persiste en backend + localStorage */
@@ -118,7 +175,9 @@ export const deleteCard = async (id) => {
   }
   const cards = (cache.cards || []).filter((c) => c.id !== id)
   cache = { version: (Number(cache.version) || 1) + 1, cards }
-  await saveCards(cache)
+
+  // Usamos replaceAll para que el borrado también se aplique en backend (no upsert)
+  await replaceAllCards(cache)
   writeLocal(cache)
   dispatchCardsUpdated() // ✅ Emitir solo en escritura
   return cache.cards

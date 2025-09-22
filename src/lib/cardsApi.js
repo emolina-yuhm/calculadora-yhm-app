@@ -268,3 +268,57 @@ export async function replaceAllCards(payload) {
     return { ok: true };
   }
 }
+
+/* ─────────────────────────────
+   NUEVO: edición/rename sin duplicar (no requiere backend extra)
+   ───────────────────────────── */
+
+/**
+ * Edita una tarjeta existente (por su id actual).
+ * - Soporta cambio de id (rename) con validación de colisión.
+ * - Persiste usando replaceAllCards (PUT /cards) para evitar duplicados.
+ *
+ * @param {string} originalId Id actual de la tarjeta a editar.
+ * @param {object} updates Campos a modificar. Puede incluir { id: 'nuevoId' }.
+ * @returns {Promise<{version:number, cards:Array}>} Payload actualizado.
+ * @throws Error('not_found') si no existe originalId
+ * @throws Error('id_conflict') si updates.id ya existe en otra tarjeta
+ */
+export async function editCardById(originalId, updates = {}) {
+  const prev = await fetchCards();
+  const cards = Array.isArray(prev?.cards) ? [...prev.cards] : [];
+
+  const idx = cards.findIndex(c => String(c?.id) === String(originalId));
+  if (idx < 0) throw new Error('not_found');
+
+  const current = cards[idx];
+  const nextId = Object.prototype.hasOwnProperty.call(updates, 'id')
+    ? String(updates.id)
+    : current.id;
+
+  // Si cambia el id, validar que no exista otro con ese id
+  const isRename = nextId !== current.id;
+  if (isRename && cards.some((c, i) => i !== idx && String(c?.id) === String(nextId))) {
+    throw new Error('id_conflict');
+  }
+
+  const nextCard = { ...current, ...updates, id: nextId };
+  cards[idx] = nextCard;
+
+  const nextPayload = {
+    version: Number(prev?.version || 1) + 1,
+    cards
+  };
+
+  await replaceAllCards(nextPayload); // esto actualiza LS y dispara cards:updated
+  return nextPayload;
+}
+
+/**
+ * Atajo para renombrar el id de una tarjeta.
+ * @param {string} originalId
+ * @param {string} newId
+ */
+export async function renameCardById(originalId, newId) {
+  return editCardById(originalId, { id: newId });
+}
