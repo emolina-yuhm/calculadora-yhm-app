@@ -211,7 +211,7 @@ export default function CardConfig() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.id, form.nombre, form.coeficientes, autoSave])
 
-  // beforeunload (respaldo)
+  // beforeunload (respaldo) — FIX: usar exactamente la misma ref en cleanup
   useEffect(() => {
     const onBeforeUnload = () => {
       if (!autoSave || !form.id || !form.nombre) return
@@ -219,7 +219,7 @@ export default function CardConfig() {
       saveForm({ showModal: false, showBanner: true })
     }
     window.addEventListener('beforeunload', onBeforeUnload)
-    return () => window.removeEventListener('beforeunload', onBeforeunload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload) // ← U mayúscula
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoSave, form.id, form.nombre, form.coeficientes])
 
@@ -407,3 +407,4 @@ export default function CardConfig() {
     </>
   )
 }
+
