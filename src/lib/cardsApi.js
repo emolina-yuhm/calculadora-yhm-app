@@ -7,10 +7,13 @@ const API_BASE_RAW =
 // Normalizar: quitar barras finales (/, //, etc.) y espacios
 const API_BASE = API_BASE_RAW.replace(/\/+$/, '');
 
-const ADMIN_SECRET = (import.meta.env.VITE_ADMIN_SECRET || '').trim();
-
 // Fallback local si el server no responde
 const LS_KEY = 'fin_cards_motos_v1';
+const SESSION_KEY = 'admin_token';
+
+function getAuthToken() {
+  try { return sessionStorage.getItem(SESSION_KEY) || ''; } catch { return ''; }
+}
 
 // Helper para construir URLs asegurando una sola barra
 function apiUrl(path = '') {
@@ -102,9 +105,8 @@ async function sendUpsertOrPut(payload) {
     'Content-Type': 'application/json',
     Accept: 'application/json'
   };
-  if (ADMIN_SECRET) {
-    headers['x-admin-secret'] = ADMIN_SECRET; // ⚠️ temporal (no recomendado para prod)
-  }
+  const token = getAuthToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
 
   // 1) Intentar UPSERT (no borra lo existente)
   const upsertBody = {
@@ -183,9 +185,8 @@ export async function saveCardsBackground(payload) {
       'Content-Type': 'application/json',
       Accept: 'application/json'
     };
-    if (ADMIN_SECRET) {
-      headers['x-admin-secret'] = ADMIN_SECRET; // ⚠️ temporal
-    }
+    const token = getAuthToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
 
     // Intentar UPSERT primero
     let res = await fetch(apiUrl('/cards/upsert'), {
@@ -240,9 +241,8 @@ export async function replaceAllCards(payload) {
     'Content-Type': 'application/json',
     Accept: 'application/json'
   };
-  if (ADMIN_SECRET) {
-    headers['x-admin-secret'] = ADMIN_SECRET;
-  }
+  const token = getAuthToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
 
   const res = await fetch(apiUrl('/cards'), {
     method: 'PUT',
